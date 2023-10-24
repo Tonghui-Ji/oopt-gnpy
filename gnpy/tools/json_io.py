@@ -469,10 +469,10 @@ def network_from_json(json_data, equipment):
     # NOTE|dutc: we could use the following, but it would tie our data format
     #            too closely to the graph library
     # from networkx import node_link_graph
-    g = DiGraph()
-    for el_config in json_data['elements']:
-        typ = el_config.pop('type')
-        variety = el_config.pop('type_variety', 'default')
+    g = DiGraph()  # 用于创建网络的一个包
+    for el_config in json_data['elements']:  # elements 所有的器件，包括收发机、光纤、光放等
+        typ = el_config.pop('type')  # type：transceiver, roadm, fiber
+        variety = el_config.pop('type_variety', 'default') # type_variety：比如光纤有SSMF、RamanFiber，transceiver也有不同类型的
         cls = _cls_for(typ)
         if typ == 'Fused':
             # well, there's no variety for the 'Fused' node type
