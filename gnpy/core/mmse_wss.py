@@ -4,38 +4,24 @@ from scipy.constants import pi,h,c
 import matplotlib.pyplot as plt
 from support.utils import lin2dB,dB2lin,parameters
 
-def h_wss_f(f_axis,wss_params):
+def h_wss_f(f_axis:np.array,wss_params:parameters):
     """
-    Decision-directed Phase-locked Loop (DDPLL) algorithm
+    Generate transfer function of wss filter
 
     Parameters
     ----------
-    Ei : complex-valued ndarray
-        Received constellation symbols.
-    Ts : float scalar
-        Symbol period.
-    Kv : float scalar
-        Loop filter gain.
-    tau1 : float scalar
-        Loop filter parameter 1.
-    tau2 : float scalar
-        Loop filter parameter 2.
-    constSymb : complex-valued ndarray
-        Complex-valued ideal constellation symbols.
-    symbTx : complex-valued ndarray
-        Transmitted symbol sequence.
-    pilotInd : int ndarray
-        Indexes of pilot-symbol locations.
-
+    f_axis : real-valued ndarray
+        Frequency axis.
+    wss_params : parameters object
+        wss parameters.
     Returns
     -------
-    θ : real-valued ndarray
-        Time-varying estimated phase-shifts.
+    h_wss_f : complex-valued ndarray
+        Transfer function of wss filter.
 
     References
     -------
-    [1] H. Meyer, Digital Communication Receivers: Synchronization, Channel 
-    estimation, and Signal Processing, Wiley 1998. Section 5.8 and 5.9.    
+    [1] Spectral modeling of channel band shapes in wavelength selective switches.    
     """
     def super_guassian(f_axis,bw,n,m):
         sigma_sg = bw/(2*np.sqrt( 2*np.log(np.sqrt(10**(m/10)))**(1/n) ))
@@ -72,16 +58,54 @@ def h_wss_f(f_axis,wss_params):
     return h_wss_f
 
 def rc_filter(N,alpha,Rs,Fs):
+    """
+    Generate pulse filter, raised cosine function
+
+    Parameters
+    ----------
+    N : integer scalar
+        Number of filter taps.
+    alpha : float
+        Roll off of rc filter.
+    Rs : float scalar
+        Buadrate of signal.
+    Fs : float scalar
+        Samplerate of signal.
+    Returns
+    -------
+    h_rc_f : complex-valued ndarray
+        Transfer function of rc filter.
+
+    References
+    -------
+    [1] Wikipedia: https://zh.wikipedia.org/zh-hans/%E5%8D%87%E9%A4%98%E5%BC%A6%E6%BF%BE%E6%B3%A2%E5%99%A8.    
+    """
     f_axis = np.linspace(-Fs/2,Fs/2-Fs/N,N)
     Ts = 1/Rs
-    h_f = Ts*np.cos(np.pi*Ts/2/alpha*(np.abs(f_axis)-(1-alpha)/(2*Ts)))
-    h_f[np.where(np.abs(f_axis)<=(1-alpha)/(2*Ts))] = Ts
-    h_f[np.where(np.abs(f_axis)>(1+alpha)/(2*Ts))] = 0
+    h_rc_f = Ts*np.cos(np.pi*Ts/2/alpha*(np.abs(f_axis)-(1-alpha)/(2*Ts)))
+    h_rc_f[np.where(np.abs(f_axis)<=(1-alpha)/(2*Ts))] = Ts
+    h_rc_f[np.where(np.abs(f_axis)>(1+alpha)/(2*Ts))] = 0
 
-    return h_f
+    return h_rc_f
 
 
 def wss_pen(params):
+    """
+    Calculate snr pen induced by wss filter based on mmse criterion.
+
+    Parameters
+    ----------
+    params : parameters object
+        Simulation parameters.
+    Returns
+    -------
+    snr_pen : real scalar
+        Snr penatly induce by wss filter.
+
+    References
+    -------
+    [1] An accurate model for system performance analysis of optical fibre networks with in-line filtering.    
+    """
     N = params.N
     Rs = params.Rs
     Fs = params.Fs

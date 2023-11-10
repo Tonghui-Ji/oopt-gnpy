@@ -70,6 +70,22 @@ def prod_mat(mat_list:list)->np.array:
     return mat_prod
 
 def pdl_pen(params):
+    """
+    Calculate snr pen induced by pdl based on mmse criterion.
+
+    Parameters
+    ----------
+    params : parameters object
+        Simulation parameters.
+    Returns
+    -------
+    snr_pen : real scalar
+        Snr penatly induce by pdl.
+
+    References
+    -------
+    [1] Analysis of Impact of Polarization Dependent Loss in Point to Multi-Point Subsea Communication Systems.    
+    """
     link_config = params.link_params.link_config
     snr_trx_dB = params.snr_trx_dB
     Rs = params.Rs
