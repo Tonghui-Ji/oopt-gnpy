@@ -5,6 +5,38 @@ import matplotlib.pyplot as plt
 from support.utils import lin2dB,dB2lin,parameters
 
 def h_wss_f(f_axis,wss_params):
+    """
+    Decision-directed Phase-locked Loop (DDPLL) algorithm
+
+    Parameters
+    ----------
+    Ei : complex-valued ndarray
+        Received constellation symbols.
+    Ts : float scalar
+        Symbol period.
+    Kv : float scalar
+        Loop filter gain.
+    tau1 : float scalar
+        Loop filter parameter 1.
+    tau2 : float scalar
+        Loop filter parameter 2.
+    constSymb : complex-valued ndarray
+        Complex-valued ideal constellation symbols.
+    symbTx : complex-valued ndarray
+        Transmitted symbol sequence.
+    pilotInd : int ndarray
+        Indexes of pilot-symbol locations.
+
+    Returns
+    -------
+    θ : real-valued ndarray
+        Time-varying estimated phase-shifts.
+
+    References
+    -------
+    [1] H. Meyer, Digital Communication Receivers: Synchronization, Channel 
+    estimation, and Signal Processing, Wiley 1998. Section 5.8 and 5.9.    
+    """
     def super_guassian(f_axis,bw,n,m):
         sigma_sg = bw/(2*np.sqrt( 2*np.log(np.sqrt(10**(m/10)))**(1/n) ))
         h_sg_f = 1/sigma_sg/np.sqrt(2*np.pi)*np.exp(-(f_axis**2/2/sigma_sg**2)**n)
@@ -112,7 +144,7 @@ def wss_pen(params):
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin  
             pass
-    n_power_lin[i+1] = sig_power_lin / dB2lin(snr_trx_dB) / 2
+    n_power_lin[-1] = sig_power_lin / dB2lin(snr_trx_dB) / 2
 
     C_f = np.prod(h_f,axis=1)
     S_f = np.zeros(N) 
