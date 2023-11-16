@@ -69,7 +69,7 @@ def prod_mat(mat_list:list)->np.array:
 
     return mat_prod
 
-def pdl_pen(params):
+def pdl_pen(params:parameters)->float:
     """
     Calculate snr pen induced by pdl based on mmse criterion.
 

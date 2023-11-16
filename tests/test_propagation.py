@@ -75,9 +75,9 @@ def test_snr(osnr_test, dest):
     conn_out = test[osnr_test][2]
     sink, nf, _ = propagation(pw, conn_in, conn_out, dest)
     osnr = round(mean(sink.osnr_ase), 3)
-    nli = 1.0 / db2lin(round(mean(sink.snr), 3)) - 1.0 / db2lin(osnr)
+    nli = 1.0 / db2lin(round(mean(sink.snr), 3)) - 1.0 / db2lin(osnr) 
     pw = expected[osnr_test][0]
-    conn_in = expected[osnr_test][1]
+    conn_in = expected[osnr_test][1] 
     conn_out = expected[osnr_test][2]
     sink, exp_nf, _ = propagation(pw, conn_in, conn_out, dest)
     expected_osnr = round(mean(sink.osnr_ase), 3)

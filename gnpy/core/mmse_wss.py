@@ -89,7 +89,7 @@ def rc_filter(N,alpha,Rs,Fs):
     return h_rc_f
 
 
-def wss_pen(params):
+def wss_pen(params:parameters)->float:
     """
     Calculate snr pen induced by wss filter based on mmse criterion.
 
