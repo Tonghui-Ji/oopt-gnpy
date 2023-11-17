@@ -13,6 +13,6 @@ class GlobalControl(object):
         self.bool_fig = bool_fig
         self.log_level = log_level
 
-        self.opticommpy_path = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__ if '__file__' in globals() else sys.executable))))
+        self.gnpy_path = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__ if '__file__' in globals() else sys.executable))))
 
         pass
