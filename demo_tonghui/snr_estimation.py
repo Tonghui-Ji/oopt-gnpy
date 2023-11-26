@@ -1,5 +1,6 @@
 from pathlib import Path
 from gnpy.core.utils import db2lin,lin2db
+from gnpy.core.parameters import Parameters
 from gnpy.core.elements import Transceiver, Fiber, Edfa, Roadm
 from gnpy.core.exceptions import NetworkTopologyError
 from gnpy.core.network import span_loss,build_network
@@ -10,12 +11,38 @@ from numpy import mean, sqrt, ones
 from gnpy.core.info import create_input_spectral_information, ReferenceCarrier
 import networkx as nx
 import matplotlib.pyplot as plt
+import numpy as np
 
 gc = GlobalControl()
 data_path = gc.gnpy_path/ 'data'
 EQPT_FILENAME = data_path / 'eqpt_config.json'
 NETWORK_FILENAME = data_path / 'LinkforSnrEstimationTest.json'
 
+def solve_network(network, source, sink,si):
+    net_res = Parameters()  # 仿真结果是一个parameters类型的，不知道这种是不是合理？
+    sig_psd_list = []
+    sig_power_list = []
+    net_res.frequency = si.frequency
+    path = dijkstra_path(network, source, sink)
+
+    for el in path:
+        sig_power_list.append(lin2db(1e3*np.sum(si.signal)))
+        if isinstance(el, Fiber):
+            sig_psd_list.append(lin2db(1e3*si.signal))
+            si = el(si)
+            sig_psd_list.append(lin2db(1e3*si.signal))     
+        si = el(si)
+    sig_power_list.append(lin2db(1e3*np.sum(si.signal)))
+
+    net_res.sig_psd = np.array(sig_psd_list).T
+    net_res.sig_power_dB = np.array(sig_power_list)
+    net_res.snr_dB = round(mean(sink.snr),2)
+    net_res.osnr_01nm_dB = round(mean(sink.osnr_ase_01nm),2)
+    net_res.osnr_ase_dB = round(mean(sink.osnr_ase), 3)
+    net_res.snr_nli_dB = lin2db(1/(1.0 / db2lin(round(mean(sink.snr), 3)) - 1.0 / db2lin(net_res.osnr_ase_dB)))
+
+    return net_res
+        
 def propagation(input_power, con_in, con_out, dest):
     equipment = load_equipment(EQPT_FILENAME)
     network = load_network(NETWORK_FILENAME, equipment)
@@ -43,19 +70,27 @@ def propagation(input_power, con_in, con_out, dest):
                                            ref_carrier=ReferenceCarrier(baud_rate=32e9, slot_width=50e9))
     source = next(transceivers[uid] for uid in transceivers if uid == 'trx A')
     sink = next(transceivers[uid] for uid in transceivers if uid == dest)
+    net_res = solve_network(network, source, sink, si)
     path = dijkstra_path(network, source, sink)
-    plt.figure()
-    for el in path:
-        si = el(si)
-        plt.plot(si.frequency,lin2db(1e3*si.signal))
-        print(el)  # remove this line when sweeping across several powers
-    # plt.show()
-    edfa_sample = next(el for el in path if isinstance(el, Edfa))
-    nf = mean(edfa_sample.nf)
 
-    print(f'pw: {input_power} conn in: {con_in} con out: {con_out}',
-          f'OSNR@0.1nm: {round(mean(sink.osnr_ase_01nm),2)}',
-          f'SNR@bandwitdth: {round(mean(sink.snr),2)}')
+    plt.figure()
+    plt.plot(net_res.frequency,net_res.sig_psd)
+    
+    plt.figure()
+    plt.plot(net_res.sig_power_dB,'-o')
+    plt.show()
+    # plt.figure()
+    # for el in path:
+    #     si = el(si)
+    #     plt.plot(si.frequency,lin2db(1e3*si.signal))
+    #     print(el)  # remove this line when sweeping across several powers
+    # # plt.show()
+    # edfa_sample = next(el for el in path if isinstance(el, Edfa))
+    # nf = mean(edfa_sample.nf)
+
+    # print(f'pw: {input_power} conn in: {con_in} con out: {con_out}',
+    #       f'OSNR@0.1nm: {round(mean(sink.osnr_ase_01nm),2)}',
+    #       f'SNR@bandwitdth: {round(mean(sink.snr),2)}')
     return sink, nf, path
 
 

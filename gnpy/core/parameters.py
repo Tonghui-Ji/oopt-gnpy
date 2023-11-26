@@ -25,7 +25,17 @@ class Parameters:
                 new_dict[key] = instance_dict['_' + key]
         return new_dict
 
+    def view(self):
+        """
+        Prints the attributes and their values in either standard or scientific notation.
 
+        """
+        for attr, value in self.__dict__.items():
+            if isinstance(value, (int, float)) and value > 1000:
+                print(f"{attr}: {value:.2e}")
+            else:
+                print(f"{attr}: {value}")
+                
 class PumpParams(Parameters):
     def __init__(self, power, frequency, propagation_direction):
         self.power = power

@@ -129,7 +129,7 @@
         {
             "uid": "Edfa1",
             "type": "Edfa",
-            "type_variety": "std_medium_gain",            
+            "type_variety": "CienaDB_medium_gain",            
             "operational": {
                 "gain_target": 18,
                 "tilt_target": 0
@@ -145,7 +145,7 @@
         {
             "uid": "Edfa2",
             "type": "Edfa",
-            "type_variety": "std_medium_gain",            
+            "type_variety": "CienaDB_medium_gain",            
             "operational": {
                 "gain_target": 18,
                 "tilt_target": 0
@@ -161,7 +161,7 @@
         {
             "uid": "Edfa3",
             "type": "Edfa",
-            "type_variety": "std_medium_gain",            
+            "type_variety": "CienaDB_medium_gain",            
             "operational": {
                 "gain_target": 18,
                 "tilt_target": 0
@@ -177,7 +177,7 @@
         {
             "uid": "Edfa4",
             "type": "Edfa",
-            "type_variety": "std_medium_gain",            
+            "type_variety": "CienaDB_medium_gain",            
             "operational": {
                 "gain_target": 18,
                 "tilt_target": 0
@@ -193,7 +193,7 @@
         {
             "uid": "Edfa5",
             "type": "Edfa",
-            "type_variety": "std_medium_gain",            
+            "type_variety": "CienaDB_medium_gain",            
             "operational": {
                 "gain_target": 18,
                 "tilt_target": 0
