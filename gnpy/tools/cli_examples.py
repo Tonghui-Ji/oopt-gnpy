@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-'''
+"""
 gnpy.tools.cli_examples
 =======================
 
 Common code for CLI examples
-'''
+"""
 
 import argparse
 import logging
@@ -48,7 +48,7 @@ def show_example_data_dir():
 
 
 def load_common_data(equipment_filename, topology_filename, simulation_filename, save_raw_network_filename):
-    '''Load common configuration from JSON files'''
+    """Load common configuration from JSON files"""
 
     try:
         equipment = load_equipment(equipment_filename)
@@ -85,7 +85,7 @@ def load_common_data(equipment_filename, topology_filename, simulation_filename,
 
 
 def _setup_logging(args):
-    logging.basicConfig(level={2: logging.DEBUG, 1: logging.INFO, 0: logging.CRITICAL}.get(args.verbose, logging.DEBUG))
+    logging.basicConfig(level={2: logging.DEBUG, 1: logging.INFO, 0: logging.WARNING}.get(args.verbose, logging.DEBUG))
 
 
 def _add_common_options(parser: argparse.ArgumentParser, network_default: Path):
@@ -323,7 +323,7 @@ def path_requests_run(args=None):
     args = parser.parse_args(args if args is not None else sys.argv[1:])
     _setup_logging(args)
 
-    _logger.info(f'Computing path requests {args.service_filename} into JSON format')
+    _logger.info(f'Computing path requests {args.service_filename.name} into JSON format')
 
     (equipment, network) = load_common_data(args.equipment, args.topology, args.sim_params, args.save_network_before_autodesign)
 
@@ -331,7 +331,6 @@ def path_requests_run(args=None):
     # TODO power density: db2linp(ower_dbm": 0)/power_dbm": 0 * nb channels as defined by
     # spacing, f_min and f_max
     p_db = equipment['SI']['default'].power_dbm
-
     p_total_db = p_db + lin2db(automatic_nch(equipment['SI']['default'].f_min,
                                              equipment['SI']['default'].f_max, equipment['SI']['default'].spacing))
     try:

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-'''
+"""
 gnpy.tools.json_io
 ==================
 
 Loading and saving data from JSON files in GNPy's internal data format
-'''
+"""
 
 from networkx import DiGraph
 from logging import getLogger
@@ -15,13 +15,15 @@ import json
 from collections import namedtuple
 from numpy import arange
 
-from gnpy.core import ansi_escapes, elements
+from gnpy.core import elements
 from gnpy.core.equipment import trx_mode_params
 from gnpy.core.exceptions import ConfigurationError, EquipmentConfigError, NetworkTopologyError, ServiceError
 from gnpy.core.science_utils import estimate_nf_model
 from gnpy.core.info import Carrier
 from gnpy.core.utils import automatic_nch, automatic_fmax, merge_amplifier_restrictions
+from gnpy.core.parameters import DEFAULT_RAMAN_COEFFICIENT
 from gnpy.topology.request import PathRequest, Disjunction, compute_spectrum_slot_vs_bandwidth
+from gnpy.topology.spectrum_assignment import mvalue_to_slots
 from gnpy.tools.convert import xls_to_json_data
 from gnpy.tools.service_sheet import read_service_sheet
 
@@ -50,10 +52,9 @@ class _JsonThing:
         for k, v in default_values.items():
             setattr(self, k, clean_kwargs.get(k, v))
             if k not in clean_kwargs and name != 'Amp':
-                print(ansi_escapes.red +
-                      f'\n WARNING missing {k} attribute in eqpt_config.json[{name}]' +
-                      f'\n default value is {k} = {v}' +
-                      ansi_escapes.reset)
+                msg = f'\n WARNING missing {k} attribute in eqpt_config.json[{name}]' \
+                    + f'\n default value is {k} = {v}'
+                _logger.warning(msg)
 
 
 class SI(_JsonThing):
@@ -109,11 +110,12 @@ class Roadm(_JsonThing):
         allowed_equalisations = ['target_pch_out_db', 'target_psd_out_mWperGHz', 'target_out_mWperSlotWidth']
         requested_eq_mask = [eq in kwargs for eq in allowed_equalisations]
         if sum(requested_eq_mask) > 1:
-            raise EquipmentConfigError('Only one equalization type should be set in ROADM, found: '
-                                       + ', '.join(eq for eq in allowed_equalisations if eq in kwargs))
+            msg = 'Only one equalization type should be set in ROADM, found: ' \
+                  + ', '.join(eq for eq in allowed_equalisations if eq in kwargs)
+            raise EquipmentConfigError(msg)
         if not any(requested_eq_mask):
-            raise EquipmentConfigError('No equalization type set in ROADM')
-
+            msg = 'No equalization type set in ROADM'
+            raise EquipmentConfigError(msg)
         for key in allowed_equalisations:
             if key in kwargs:
                 setattr(self, key, kwargs[key])
@@ -133,6 +135,7 @@ class Transceiver(_JsonThing):
         for mode_params in self.mode:
             penalties = mode_params.get('penalties')
             mode_params['penalties'] = {}
+            mode_params['equalization_offset_db'] = mode_params.get('equalization_offset_db', 0)
             if not penalties:
                 continue
             for impairment in ('chromatic_dispersion', 'pmd', 'pdl'):
@@ -162,9 +165,14 @@ class Fiber(_JsonThing):
 
     def __init__(self, **kwargs):
         self.update_attr(self.default_values, kwargs, self.__class__.__name__)
-        for optional in ['gamma', 'raman_efficiency']:
-            if optional in kwargs:
-                setattr(self, optional, kwargs[optional])
+        if 'gamma' in kwargs:
+            setattr(self, 'gamma', kwargs['gamma'])
+        if 'raman_efficiency' in kwargs:
+            raman_coefficient = kwargs['raman_efficiency']
+            cr = raman_coefficient.pop('cr')
+            raman_coefficient['g0'] = cr
+            raman_coefficient['reference_frequency'] = DEFAULT_RAMAN_COEFFICIENT['reference_frequency']
+            setattr(self, 'raman_coefficient', raman_coefficient)
 
 
 class RamanFiber(Fiber):
@@ -182,15 +190,24 @@ class Amp(_JsonThing):
         'p_max': None,
         'nf_model': None,
         'dual_stage_model': None,
+        'preamp_variety': None,
+        'booster_variety': None,
+        'nf_min': None,
+        'nf_max': None,
+        'nf_coef': None,
+        'nf0': None,
         'nf_fit_coeff': None,
-        'nf_ripple': None,
+        'nf_ripple': 0,
         'dgt': None,
-        'gain_ripple': None,
+        'gain_ripple': 0,
+        'tilt_ripple': 0,
+        'f_ripple_ref': None,
         'out_voa_auto': False,
         'allowed_for_design': False,
         'raman': False,
         'pmd': 0,
-        'pdl': 0
+        'pdl': 0,
+        'advance_configurations_from_json': None
     }
 
     def __init__(self, **kwargs):
@@ -209,7 +226,8 @@ class Amp(_JsonThing):
             try:
                 nf0 = kwargs.pop('nf0')
             except KeyError:  # nf0 is expected for a fixed gain amp
-                raise EquipmentConfigError(f'missing nf0 value input for amplifier: {type_variety} in equipment config')
+                msg = f'missing nf0 value input for amplifier: {type_variety} in equipment config'
+                raise EquipmentConfigError(msg)
             for k in ('nf_min', 'nf_max'):
                 try:
                     del kwargs[k]
@@ -224,7 +242,8 @@ class Amp(_JsonThing):
                 nf_min = kwargs.pop('nf_min')
                 nf_max = kwargs.pop('nf_max')
             except KeyError:
-                raise EquipmentConfigError(f'missing nf_min or nf_max value input for amplifier: {type_variety} in equipment config')
+                msg = f'missing nf_min or nf_max value input for amplifier: {type_variety} in equipment config'
+                raise EquipmentConfigError(msg)
             try:  # remove all remaining nf inputs
                 del kwargs['nf0']
             except KeyError:
@@ -246,7 +265,8 @@ class Amp(_JsonThing):
                 preamp_variety = kwargs.pop('preamp_variety')
                 booster_variety = kwargs.pop('booster_variety')
             except KeyError:
-                raise EquipmentConfigError(f'missing preamp/booster variety input for amplifier: {type_variety} in equipment config')
+                msg = f'missing preamp/booster variety input for amplifier: {type_variety} in equipment config'
+                raise EquipmentConfigError(msg)
             dual_stage_def = Model_dual_stage(preamp_variety, booster_variety)
         else:
             raise EquipmentConfigError(f'Edfa type_def {type_def} does not exist')
@@ -368,9 +388,7 @@ def _update_dual_stage(equipment):
 
 
 def _roadm_restrictions_sanity_check(equipment):
-    """ verifies that booster and preamp restrictions specified in roadm equipment are listed
-    in the edfa.
-    """
+    """verifies that booster and preamp restrictions specified in roadm equipment are listed in the edfa."""
     restrictions = equipment['Roadm']['default'].restrictions['booster_variety_list'] + \
         equipment['Roadm']['default'].restrictions['preamp_variety_list']
     for amp_name in restrictions:
@@ -440,11 +458,11 @@ def load_network(filename, equipment):
 
 
 def save_network(network: DiGraph, filename: str):
-    '''Dump the network into a JSON file
+    """Dump the network into a JSON file
 
     :param network: network to work on
     :param filename: file to write to
-    '''
+    """
     save_json(network_to_json(network), filename)
 
 
@@ -486,13 +504,20 @@ def network_from_json(json_data, equipment):
                 # if more than one equalization was defined in element config, then raise an error
                 extra_params = merge_equalization(temp, extra_params)
                 if not extra_params:
-                    raise ConfigurationError(f'ROADM {el_config["uid"]}: invalid equalization settings')
+                    msg = f'ROADM {el_config["uid"]}: invalid equalization settings'
+                    raise ConfigurationError(msg)
             temp = merge_amplifier_restrictions(temp, extra_params)
             el_config['params'] = temp
             el_config['type_variety'] = variety
-        elif (typ in ['Fiber', 'RamanFiber']) or (typ == 'Edfa' and variety not in ['default', '']):
+        elif (typ in ['Fiber', 'RamanFiber']):
             raise ConfigurationError(f'The {typ} of variety type {variety} was not recognized:'
                                      '\nplease check it is properly defined in the eqpt_config json file')
+        elif typ == 'Edfa':
+            if variety in ['default', '']:
+                el_config['params'] = Amp.default_values
+            else:
+                raise ConfigurationError(f'The Edfa of variety type {variety} was not recognized:'
+                                         '\nplease check it is properly defined in the eqpt_config json file')
         el = cls(**el_config)
         g.add_node(el)
 
@@ -507,7 +532,8 @@ def network_from_json(json_data, equipment):
                 edge_length = 0.01
             g.add_edge(nodes[from_node], nodes[to_node], weight=edge_length)
         except KeyError:
-            raise NetworkTopologyError(f'can not find {from_node} or {to_node} defined in {cx}')
+            msg = f'can not find {from_node} or {to_node} defined in {cx}'
+            raise NetworkTopologyError(msg)
 
     return g
 
@@ -538,15 +564,13 @@ def save_json(obj, filename):
 
 
 def load_requests(filename, eqpt, bidir, network, network_filename):
-    """ loads the requests from a json or an excel file into a data string
-    """
+    """loads the requests from a json or an excel file into a data string"""
     if filename.suffix.lower() in ('.xls', '.xlsx'):
         _logger.info('Automatically converting requests from XLS to JSON')
         try:
             return convert_service_sheet(filename, eqpt, network, network_filename=network_filename, bidir=bidir)
         except ServiceError as this_e:
-            print(f'{ansi_escapes.red}Service error:{ansi_escapes.reset} {this_e}')
-            exit(1)
+            raise ServiceError(f'Service error: {this_e}')
     else:
         return load_json(filename)
 
@@ -563,6 +587,9 @@ def requests_from_json(json_data, equipment):
         params['bidir'] = req['bidirectional']
         params['destination'] = req['destination']
         params['trx_type'] = req['path-constraints']['te-bandwidth']['trx_type']
+        if params['trx_type'] is None:
+            msg = f'Request {req["request-id"]} has no transceiver type defined.'
+            raise ServiceError(msg)
         params['trx_mode'] = req['path-constraints']['te-bandwidth'].get('trx_mode', None)
         params['format'] = params['trx_mode']
         params['spacing'] = req['path-constraints']['te-bandwidth']['spacing']
@@ -575,9 +602,12 @@ def requests_from_json(json_data, equipment):
         # recover trx physical param (baudrate, ...) from type and mode
         # in trx_mode_params optical power is read from equipment['SI']['default'] and
         # nb_channel is computed based on min max frequency and spacing
-        trx_params = trx_mode_params(equipment, params['trx_type'], params['trx_mode'], True)
+        try:
+            trx_params = trx_mode_params(equipment, params['trx_type'], params['trx_mode'], True)
+        except EquipmentConfigError as e:
+            msg = f'Equipment Config error in {req["request-id"]}: {e}'
+            raise EquipmentConfigError(msg) from e
         params.update(trx_params)
-        # print(trx_params['min_spacing'])
         # optical power might be set differently in the request. if it is indicated then the
         # params['power'] is updated
         try:
@@ -598,7 +628,8 @@ def requests_from_json(json_data, equipment):
                 params['nb_channel'] = automatic_nch(f_min, f_max_from_si, params['spacing'])
         except KeyError:
             params['nb_channel'] = automatic_nch(f_min, f_max_from_si, params['spacing'])
-        params['effective_freq_slot'] = req['path-constraints']['te-bandwidth'].get('effective-freq-slot', [None])[0]
+        params['effective_freq_slot'] = \
+            req['path-constraints']['te-bandwidth'].get('effective-freq-slot', [{'N': None, 'M': None}])
         try:
             params['path_bandwidth'] = req['path-constraints']['te-bandwidth']['path_bandwidth']
         except KeyError:
@@ -612,44 +643,66 @@ def _check_one_request(params, f_max_from_si):
     """Checks that the requested parameters are consistant (spacing vs nb channel vs transponder mode...)"""
     f_min = params['f_min']
     f_max = params['f_max']
-    max_recommanded_nb_channels = automatic_nch(f_min, f_max, params['spacing'])
+    max_recommanded_nb_channels = automatic_nch(f_min, f_max_from_si, params['spacing'])
     if params['baud_rate'] is not None:
         # implicitly means that a mode is defined with min_spacing
         if params['min_spacing'] > params['spacing']:
             msg = f'Request {params["request_id"]} has spacing below transponder ' +\
                   f'{params["trx_type"]} {params["trx_mode"]} min spacing value ' +\
                   f'{params["min_spacing"]*1e-9}GHz.\nComputation stopped'
-            print(msg)
-            _logger.critical(msg)
             raise ServiceError(msg)
         if f_max > f_max_from_si:
-            msg = f'''Requested channel number {params["nb_channel"]}, baud rate {params["baud_rate"]} GHz
-            and requested spacing {params["spacing"]*1e-9}GHz is not consistent with frequency range
-            {f_min*1e-12} THz, {f_max*1e-12} THz, min recommanded spacing {params["min_spacing"]*1e-9}GHz.
-            max recommanded nb of channels is {max_recommanded_nb_channels}.'''
-            _logger.critical(msg)
+            msg = f'Requested channel number {params["nb_channel"]}, baud rate {params["baud_rate"] * 1e-9} GHz' \
+                  + f' and requested spacing {params["spacing"]*1e-9}GHz is not consistent with frequency range' \
+                  + f' {f_min*1e-12} THz, {f_max_from_si*1e-12} THz.' \
+                  + f' Max recommanded nb of channels is {max_recommanded_nb_channels}.'
             raise ServiceError(msg)
     # Transponder mode already selected; will it fit to the requested bandwidth?
-    if params['trx_mode'] is not None and params['effective_freq_slot'] is not None \
-            and params['effective_freq_slot']['M'] is not None:
-        _, requested_m = compute_spectrum_slot_vs_bandwidth(params['path_bandwidth'],
-                                                            params['spacing'],
-                                                            params['bit_rate'])
-        # params['effective_freq_slot']['M'] value should be bigger than the computed requested_m (simple estimate)
+    if params['trx_mode'] is not None and params['effective_freq_slot'] is not None:
+        required_nb_of_channels, requested_m = compute_spectrum_slot_vs_bandwidth(params['path_bandwidth'],
+                                                                                  params['spacing'],
+                                                                                  params['bit_rate'])
+        _, per_channel_m = compute_spectrum_slot_vs_bandwidth(params['bit_rate'],
+                                                              params['spacing'],
+                                                              params['bit_rate'])
+        # each M should fit one or more channels if it is not None
+        # spectrum slots should not overlap
+        # resulting nb of channels should be bigger than the nb computed with path_bandwidth
+        # without being splitted
         # TODO: elaborate a more accurate estimate with nb_wl * tx_osnr + possibly guardbands in case of
         # superchannel closed packing.
-
-        if requested_m > params['effective_freq_slot']['M']:
-            msg = f'requested M {params["effective_freq_slot"]["M"]} number of slots for request' +\
-                  f'{params["request_id"]} should be greater than {requested_m} to support request' +\
-                  f'{params["path_bandwidth"] * 1e-9} Gbit/s with {params["trx_type"]} {params["trx_mode"]}'
-            _logger.critical(msg)
+        nb_of_channels = 0
+        # order slots
+        slots = sorted(params['effective_freq_slot'], key=lambda x: float('inf') if x['N'] is None else x['N'])
+        for slot in slots:
+            nb_of_channels = nb_of_channels + slot['M'] // per_channel_m if slot['M'] is not None \
+                and nb_of_channels is not None else None
+            if slot['M'] is not None and slot['M'] < per_channel_m:
+                msg = f'Requested M {slot} number of slots for request' +\
+                      f' {params["request_id"]} should be greater than {per_channel_m} to support request' +\
+                      f'with {params["trx_type"]} {params["trx_mode"]}'
+                _logger.critical(msg)
+        if nb_of_channels is not None and nb_of_channels < required_nb_of_channels:
+            msg = f'Requested M {slots} number of slots for request {params["request_id"]} support {nb_of_channels}' +\
+                  f' nb of channels while {required_nb_of_channels} are required to support request' +\
+                  f' {params["path_bandwidth"] * 1e-9} Gbit/s with {params["trx_type"]} {params["trx_mode"]}'
             raise ServiceError(msg)
+        if nb_of_channels is not None:
+            _, stop0n = mvalue_to_slots(slots[0]['N'], slots[0]['M'])
+            i = 1
+            while i < len(slots):
+                slot = slots[i]
+                startn, stopn = mvalue_to_slots(slot['N'], slot['M'])
+                if startn <= stop0n:
+                    msg = f'Requested M {slots} for request {params["request_id"]} overlap'
+                    raise ServiceError(msg)
+                _, stop0n = startn, stopn
+                i += 1
 
 
 def disjunctions_from_json(json_data):
-    """ reads the disjunction requests from the json dict and create the list
-        of requested disjunctions for this set of requests
+    """reads the disjunction requests from the json dict and create the list
+    of requested disjunctions for this set of requests
     """
     disjunctions_list = []
     if 'synchronization' in json_data:

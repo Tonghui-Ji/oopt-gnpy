@@ -4,12 +4,12 @@
 # License: BSD 3-Clause Licence
 # Copyright (c) 2018, Telecom Infra Project
 
-'''
+"""
 @author: esther.lerouzic
 checks that computed paths are disjoint as specified in the json service file
 that computed paths do not loop
 that include node constraints are correctly taken into account
-'''
+"""
 
 from pathlib import Path
 import pytest
@@ -19,7 +19,7 @@ from gnpy.core.exceptions import ServiceError, DisjunctionError
 from gnpy.core.utils import automatic_nch, lin2db
 from gnpy.core.elements import Roadm
 from gnpy.topology.request import (compute_path_dsjctn, isdisjoint, find_reversed_path, PathRequest,
-                                   correct_json_route_list)
+                                   correct_json_route_list, requests_aggregation, Disjunction)
 from gnpy.topology.spectrum_assignment import build_oms_list
 from gnpy.tools.json_io import requests_from_json, load_requests, load_network, load_equipment, disjunctions_from_json
 
@@ -31,8 +31,7 @@ EQPT_LIBRARY_NAME = Path(__file__).parent.parent / 'tests/data/eqpt_config.json'
 
 @pytest.fixture()
 def serv(test_setup):
-    ''' common setup for service list
-    '''
+    """common setup for service list"""
     network, equipment = test_setup
     data = load_requests(SERVICE_FILE_NAME, equipment, bidir=False, network=network, network_filename=NETWORK_FILE_NAME)
     rqs = requests_from_json(data, equipment)
@@ -43,8 +42,7 @@ def serv(test_setup):
 
 @pytest.fixture()
 def test_setup():
-    ''' common setup for tests: builds network, equipment and oms only once
-    '''
+    """common setup for tests: builds network, equipment and oms only once"""
     equipment = load_equipment(EQPT_LIBRARY_NAME)
     network = load_network(NETWORK_FILE_NAME, equipment)
     # Build the network once using the default power defined in SI in eqpt config
@@ -61,9 +59,10 @@ def test_setup():
 
 
 def test_disjunction(serv):
-    ''' service_file contains sevaral combination of disjunction constraint. The test checks
-        that computed paths with disjunction constraint are effectively disjoint
-    '''
+    """service_file contains sevaral combination of disjunction constraint
+
+    The test checks that computed paths with disjunction constraint are effectively disjoint.
+    """
     network, equipment, rqs, dsjn = serv
     pths = compute_path_dsjctn(network, equipment, rqs, dsjn)
     print(dsjn)
@@ -86,8 +85,7 @@ def test_disjunction(serv):
 
 
 def test_does_not_loop_back(serv):
-    ''' check that computed paths do not loop back ie each element appears only once
-    '''
+    """check that computed paths do not loop back ie each element appears only once"""
     network, equipment, rqs, dsjn = serv
     pths = compute_path_dsjctn(network, equipment, rqs, dsjn)
     test = True
@@ -108,8 +106,7 @@ def test_does_not_loop_back(serv):
 
 
 def create_rq(equipment, srce, dest, bdir, node_list, loose_list, rqid='test_request'):
-    ''' create the usual request list according to parameters
-    '''
+    """create the usual request list according to parameters"""
     requests_list = []
     params = {
         'request_id': rqid,
@@ -151,19 +148,20 @@ def create_rq(equipment, srce, dest, bdir, node_list, loose_list, rqid='test_req
     ['trx a', 'trx h', 'pass', 'found_path', ['trx h'], ['STRICT']],
     ['trx a', 'trx h', 'pass', 'found_path', ['roadm a'], ['STRICT']]])
 def test_include_constraints(test_setup, srce, dest, result, pth, node_list, loose_list):
-    ''' check that all combinations of constraints are correctly handled:
-        - STRICT/LOOSE
-        - correct names/incorrect names -> pass/fail
-        - possible include/impossible include
-        if incorrect name -> fail
-        else:
-                                      constraint    |one or more STRICT | all LOOSE
-            ----------------------------------------------------------------------------------
-            >1 path from s to d | can be applied    | found_path        | found_path
-                                | cannot be applied | no_path           | found_path
-            ----------------------------------------------------------------------------------
-            0                   |                   |          computation stops
-    '''
+    """check that all combinations of constraints are correctly handled:
+
+    - STRICT/LOOSE
+    - correct names/incorrect names -> pass/fail
+    - possible include/impossible include
+    if incorrect name -> fail
+    else:
+                                  constraint    |one or more STRICT | all LOOSE
+        ----------------------------------------------------------------------------------
+        >1 path from s to d | can be applied    | found_path        | found_path
+                            | cannot be applied | no_path           | found_path
+        ----------------------------------------------------------------------------------
+        0                   |                   |          computation stops
+    """
     network, equipment = test_setup
     dsjn = []
     bdir = False
@@ -201,7 +199,7 @@ def test_include_constraints(test_setup, srce, dest, result, pth, node_list, loo
       ['roadm c', 'roadm f'],
       ['roadm a', 'roadm b', 'roadm f', 'roadm h']]]])
 def test_create_disjunction(test_setup, dis1, dis2, node_list1, loose_list1, result, expected_paths):
-    """ verifies that the expected result is obtained for a set of particular constraints:
+    """verifies that the expected result is obtained for a set of particular constraints:
     in particular, verifies that:
     - multiple disjunction constraints are correcly handled
     - in case a loose constraint can not be met, the first alternate candidate is selected
@@ -242,3 +240,91 @@ def test_create_disjunction(test_setup, dis1, dis2, node_list1, loose_list1, res
             path_names.append(roadm_names)
         assert path_names == expected_paths
         # if loose, one path can be returned
+
+
+@pytest.fixture()
+def request_set():
+    """ creates default request dict
+    """
+    return {
+        # 'request_id': '0',
+        'source': 'trx a',
+        'bidir': False,
+        'destination': 'trx g',
+        'trx_type': 'Voyager',
+        'spacing': 50e9,
+        'nodes_list': [],
+        'loose_list': [],
+        'f_min': 191.1e12,
+        'f_max': 196.3e12,
+        'nb_channel': None,
+        'power': 0,
+        'path_bandwidth': 200e9}
+
+
+@pytest.mark.parametrize(
+    'ids, modes, req_n, req_m, disjunction, final_ids, final_ns, final_ms, final_path_bandwidths',
+    # requests that should be correctly aggregated:
+    [(['a', 'b', 'c', 'd'], ['mode 1', 'mode 1', 'mode 1', 'mode 1'],
+      [[0], [16], [32], [48]], [[8], [8], [8], [8]], [[]],
+      ['d | c | b | a'], [[48, 32, 16, 0]], [[8, 8, 8, 8]], [800e9]),
+     (['a', 'b', 'c', 'd'], ['mode 1', 'mode 1', 'mode 1', 'mode 1'],
+      [[0, 8], [16, 24], [32, 40], [48]], [[4, 4], [4, 4], [4, 4], [8]], [[]],
+      ['d | c | b | a'], [[48, 32, 40, 16, 24, 0, 8]], [[8, 4, 4, 4, 4, 4, 4]], [800e9]),
+     (['a', 'b', 'c', 'd'], ['mode 1', 'mode 1', 'mode 1', 'mode 1'],
+      [[0, 8], [None, 24], [32, 40], [None]], [[4, 4], [4, 4], [4, 4], [None]], [[]],
+      ['d | c | b | a'], [[None, 32, 40, None, 24, 0, 8]], [[None, 4, 4, 4, 4, 4, 4]], [800e9]),
+     # 'a' and 'b' have same constraint and can be aggregated
+     (['a', 'b', 'c', 'd'], ['mode 1', 'mode 1', 'mode 1', 'mode 1'],
+      [[0], [16], [32], [48]], [[8], [8], [8], [8]], [['c', 'd']],
+      ['b | a', 'c', 'd'], [[16, 0], [32], [48]], [[8, 8], [8], [8]], [400e9, 200e9, 200e9]),
+     (['a', 'b', 'c', 'd'], ['mode 1', 'mode 1', 'mode 1', 'mode 1'],
+      [[0], [16], [32], [48]], [[8], [8], [8], [8]], [['a', 'd'], ['b', 'd']],
+      ['b | a', 'c', 'd'], [[16, 0], [32], [48]], [[8, 8], [8], [8]], [400e9, 200e9, 200e9]),
+     # requests that should not be aggregated:
+     (['a', 'b', 'c', 'd'], [None, None, None, 'mode 1'],
+      [[0, 8], [None, 24], [32, 40], [None]], [[4, 4], [4, 4], [4, 4], [None]], [[]],
+      ['a', 'b', 'c', 'd'], [[0, 8], [None, 24], [32, 40], [None]], [[4, 4], [4, 4], [4, 4], [None]],
+      [200e9, 200e9, 200e9, 200e9]),
+     (['a', 'b', 'c', 'd'], ['mode 1', 'mode 1', 'mode 1', 'mode 1'],
+      [[0], [16], [32], [48]], [[8], [8], [8], [8]], [['c', 'd', 'a']],
+      ['a', 'b', 'c', 'd'], [[0], [16], [32], [48]], [[8], [8], [8], [8]], [200e9, 200e9, 200e9, 200e9]), ])
+def test_aggregation(ids, modes, req_n, req_m, disjunction, final_ids, final_ns, final_ms, final_path_bandwidths,
+                     request_set):
+    """ tests that identical requests are correctly aggregated (included frequency slots merging)
+    if mode is not defined, requests must not be merged,
+    if requests are in a synchronization vector, they should not be merged
+    """
+    equipment = load_equipment(EQPT_LIBRARY_NAME)
+    requests = []
+    for request_id, mode, req_n, req_m in zip(ids, modes, req_n, req_m):
+        params = request_set
+        params['request_id'] = request_id
+        params['trx_mode'] = mode
+        params['effective_freq_slot'] = [{'N': n, 'M': m} for n, m in zip(req_n, req_m)]
+        trx_params = trx_mode_params(equipment, params['trx_type'], params['trx_mode'], True)
+        params.update(trx_params)
+        requests.append(PathRequest(**params))
+    params = {
+        'relaxable': False,
+        'link_diverse': True,
+        'node_diverse': True
+    }
+
+    disjunctions = []
+    i = 0
+    for vector in disjunction:
+        params['disjunctions_req'] = vector
+        params['disjunction_id'] = i
+        disjunctions.append(Disjunction(**params))
+        i += 1
+    requests, disjunctions = requests_aggregation(requests, disjunctions)
+    print(disjunctions)
+    print(requests)
+    i = 0
+    for final_id, final_n, final_m, final_path_bandwidth in zip(final_ids, final_ns, final_ms, final_path_bandwidths):
+        assert requests[i].request_id == final_id
+        assert requests[i].N == final_n
+        assert requests[i].M == final_m
+        assert requests[i].path_bandwidth == final_path_bandwidth
+        i += 1

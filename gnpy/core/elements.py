@@ -26,7 +26,7 @@ from scipy.constants import h, c
 from scipy.interpolate import interp1d
 from collections import namedtuple
 from typing import Union
-
+from logging import getLogger
 
 from gnpy.core.utils import lin2db, db2lin, arrange_frequencies, snr_sum, per_label_average, pretty_summary_print, \
     watt2dbm, psd2powerdbm
@@ -36,17 +36,20 @@ from gnpy.core.info import SpectralInformation, ReferenceCarrier
 from gnpy.core.exceptions import NetworkTopologyError, SpectrumError, ParametersError
 
 
+_logger = getLogger(__name__)
+
+
 class Location(namedtuple('Location', 'latitude longitude city region')):
     def __new__(cls, latitude=0, longitude=0, city=None, region=None):
         return super().__new__(cls, latitude, longitude, city, region)
 
 
 class _Node:
-    '''Convenience class for providing common functionality of all network elements
+    """Convenience class for providing common functionality of all network elements
 
     This class is just an internal implementation detail; do **not** assume that all network elements
     inherit from :class:`_Node`.
-    '''
+    """
     def __init__(self, uid, name=None, params=None, metadata=None, operational=None, type_variety=None):
         if name is None:
             name = uid
@@ -87,12 +90,13 @@ class Transceiver(_Node):
         self.chromatic_dispersion = None
         self.pmd = None
         self.pdl = None
+        self.latency = None
         self.penalties = {}
         self.total_penalty = 0
         self.propagated_labels = [""]
 
     def _calc_cd(self, spectral_info):
-        """ Updates the Transceiver property with the CD of the received channels. CD in ps/nm.
+        """Updates the Transceiver property with the CD of the received channels. CD in ps/nm.
         """
         self.chromatic_dispersion = spectral_info.chromatic_dispersion * 1e3
 
@@ -105,6 +109,11 @@ class Transceiver(_Node):
         """Updates the Transceiver property with the PDL of the received channels. PDL in dB.
         """
         self.pdl = spectral_info.pdl
+
+    def _calc_latency(self, spectral_info):
+        """Updates the Transceiver property with the latency of the received channels. Latency in ms.
+        """
+        self.latency = spectral_info.latency * 1e3
 
     def _calc_penalty(self, impairment_value, boundary_list):
         return interp(impairment_value, boundary_list['up_to_boundary'], boundary_list['penalty_value'],
@@ -172,6 +181,7 @@ class Transceiver(_Node):
                 f'chromatic_dispersion={self.chromatic_dispersion!r}, '
                 f'pmd={self.pmd!r}, '
                 f'pdl={self.pdl!r}, '
+                f'latency={self.latency!r}, '
                 f'penalties={self.penalties!r})')
 
     def __str__(self):
@@ -185,6 +195,7 @@ class Transceiver(_Node):
         cd = mean(self.chromatic_dispersion)
         pmd = mean(self.pmd)
         pdl = mean(self.pdl)
+        latency = mean(self.latency)
 
         result = '\n'.join([f'{type(self).__name__} {self.uid}',
                             f'  GSNR (0.1nm, dB):          {pretty_summary_print(snr_01nm)}',
@@ -193,7 +204,8 @@ class Transceiver(_Node):
                             f'  OSNR ASE (signal bw, dB):  {pretty_summary_print(osnr_ase)}',
                             f'  CD (ps/nm):                {cd:.2f}',
                             f'  PMD (ps):                  {pmd:.2f}',
-                            f'  PDL (dB):                  {pdl:.2f}'])
+                            f'  PDL (dB):                  {pdl:.2f}',
+                            f'  Latency (ms):              {latency:.2f}'])
 
         cd_penalty = self.penalties.get('chromatic_dispersion')
         if cd_penalty is not None:
@@ -212,6 +224,7 @@ class Transceiver(_Node):
         self._calc_cd(spectral_info)
         self._calc_pmd(spectral_info)
         self._calc_pdl(spectral_info)
+        self._calc_latency(spectral_info)
         return spectral_info
 
 
@@ -222,7 +235,8 @@ class Roadm(_Node):
         try:
             super().__init__(*args, params=RoadmParams(**params), **kwargs)
         except ParametersError as e:
-            raise ParametersError(f'Config error in {kwargs["uid"]}: {e}') from e
+            msg = f'Config error in {kwargs["uid"]}: {e}'
+            raise ParametersError(msg) from e
 
         # Target output power for the reference carrier, can only be computed on the fly, because it depends
         # on the path, since it depends on the equalization definition on the degree.
@@ -336,6 +350,8 @@ class Roadm(_Node):
             return self.per_degree_pch_out_dbm[degree]
         elif degree in self.per_degree_pch_psd:
             return psd2powerdbm(self.per_degree_pch_psd[degree], spectral_info.baud_rate)
+        elif degree in self.per_degree_pch_psw:
+            return psd2powerdbm(self.per_degree_pch_psw[degree], spectral_info.slot_width)
         return self.get_roadm_target_power(spectral_info=spectral_info)
 
     def propagate(self, spectral_info, degree):
@@ -449,21 +465,14 @@ class Fiber(_Node):
     def __init__(self, *args, params=None, **kwargs):
         if not params:
             params = {}
-        super().__init__(*args, params=FiberParams(**params), **kwargs)
+        try:
+            super().__init__(*args, params=FiberParams(**params), **kwargs)
+        except ParametersError as e:
+            msg = f'Config error in {kwargs["uid"]}: {e}'
+            raise ParametersError(msg) from e
         self.pch_out_db = None
         self.passive = True
         self.propagated_labels = [""]
-        # Raman efficiency matrix function of the delta frequency constructed such that each row is related to a
-        # fixed frequency: positive elements represent a gain (from higher frequency) and negative elements represent
-        # a loss (to lower frequency)
-        if self.params.raman_efficiency:
-            frequency_offset = self.params.raman_efficiency['frequency_offset']
-            frequency_offset = append(-flip(frequency_offset[1:]), frequency_offset)
-            cr = self.params.raman_efficiency['cr']
-            cr = append(- flip(cr[1:]), cr)
-            self._cr_function = lambda frequency: interp(frequency, frequency_offset, cr)
-        else:
-            self._cr_function = lambda frequency: zeros(squeeze(frequency).shape)
 
         # Lumped losses
         z_lumped_losses = array([lumped['position'] for lumped in self.params.lumped_losses])  # km
@@ -513,28 +522,32 @@ class Fiber(_Node):
                           f'  reference pch out (dBm):     {self.pch_out_db:.2f}',
                           f'  actual pch out (dBm):        {total_pch}'])
 
+    def interpolate_parameter_over_spectrum(self, parameter, ref_frequency, spectrum_frequency, name):
+        try:
+            interpolation = interp1d(ref_frequency, parameter)(spectrum_frequency)
+            return interpolation
+        except ValueError:
+            raise SpectrumError('The spectrum bandwidth exceeds the frequency interval used to define the fiber '
+                                f'{name} in "{type(self).__name__} {self.uid}".'
+                                f'\nSpectrum f_min-f_max: {round(spectrum_frequency[0] * 1e-12, 2)}-'
+                                f'{round(spectrum_frequency[-1] * 1e-12, 2)}'
+                                f'\n{name} f_min-f_max: {round(ref_frequency[0] * 1e-12, 2)}-'
+                                f'{round(ref_frequency[-1] * 1e-12, 2)}')
+
     def loss_coef_func(self, frequency):
         frequency = asarray(frequency)
         if self.params.loss_coef.size > 1:
-            try:
-                loss_coef = interp1d(self.params.f_loss_ref, self.params.loss_coef)(frequency)
-            except ValueError:
-                raise SpectrumError('The spectrum bandwidth exceeds the frequency interval used to define the fiber '
-                                    f'loss coefficient in "{type(self).__name__} {self.uid}".'
-                                    f'\nSpectrum f_min-f_max: {round(frequency[0]*1e-12,2)}-'
-                                    f'{round(frequency[-1]*1e-12,2)}'
-                                    f'\nLoss coefficient f_min-f_max: {round(self.params.f_loss_ref[0]*1e-12,2)}-'
-                                    f'{round(self.params.f_loss_ref[-1]*1e-12,2)}')
+            loss_coef = self.interpolate_parameter_over_spectrum(self.params.loss_coef, self.params.f_loss_ref,
+                                                                 frequency, 'Loss Coefficient')
         else:
             loss_coef = full(frequency.size, self.params.loss_coef)
         return squeeze(loss_coef)
-
 
     @property
     def loss(self):
         """total loss including padding att_in: useful for polymorphism with roadm loss"""
         return self.loss_coef_func(self.params.ref_frequency) * self.params.length + \
-            self.params.con_in + self.params.con_out + self.params.att_in
+            self.params.con_in + self.params.con_out + self.params.att_in + sum(lin2db(1 / self.lumped_losses))
 
     def alpha(self, frequency):
         """Returns the linear exponent attenuation coefficient such that
@@ -545,16 +558,71 @@ class Fiber(_Node):
         """
         return self.loss_coef_func(frequency) / (10 * log10(exp(1)))
 
+    def beta2(self, frequency=None):
+        """Returns the beta2 chromatic dispersion coefficient as the second order term of the beta function
+        expanded as a Taylor series evaluated at the given frequency
+
+        :param frequency: the frequency at which alpha is computed [Hz]
+        :return: beta2: beta2 chromatic dispersion coefficient for f in frequency # 1/(m * Hz^2)
+        """
+        frequency = asarray(self.params.ref_frequency if frequency is None else frequency)
+        if self.params.dispersion.size > 1:
+            dispersion = self.interpolate_parameter_over_spectrum(self.params.dispersion, self.params.f_dispersion_ref,
+                                                                  frequency, 'Chromatic Dispersion')
+        else:
+            if self.params.dispersion_slope is None:
+                dispersion = (frequency / self.params.f_dispersion_ref) ** 2 * self.params.dispersion
+            else:
+                wavelength = c / frequency
+                dispersion = self.params.dispersion + self.params.dispersion_slope * \
+                             (wavelength - c / self.params.f_dispersion_ref)
+        beta2 = -((c / frequency) ** 2 * dispersion) / (2 * pi * c)
+        return beta2
+
+    def beta3(self, frequency=None):
+        """Returns the beta3 chromatic dispersion coefficient as the third order term of the beta function
+        expanded as a Taylor series evaluated at the given frequency
+
+        :param frequency: the frequency at which alpha is computed [Hz]
+        :return: beta3: beta3 chromatic dispersion coefficient for f in frequency # 1/(m * Hz^3)
+        """
+        frequency = asarray(self.params.ref_frequency if frequency is None else frequency)
+        if self.params.dispersion.size > 1:
+            beta3 = polyfit(self.params.f_dispersion_ref - self.params.ref_frequency,
+                            self.beta2(self.params.f_dispersion_ref), 2)[1] / (2*pi)
+            beta3 = full(frequency.size, beta3)
+        else:
+            if self.params.dispersion_slope is None:
+                beta3 = zeros(frequency.size)
+            else:
+                dispersion_slope = self.params.dispersion_slope
+                beta2 = self.beta2(frequency)
+                beta3 = (dispersion_slope - (4 * pi * frequency ** 3 / c ** 2) * beta2) / (
+                            2 * pi * frequency ** 2 / c) ** 2
+        return beta3
+
+    def gamma(self, frequency=None):
+        """Returns the nonlinear interference coefficient such that
+        :math: `gamma(f) = 2 pi f n_2 c^{-1} A_{eff}^{-1}`
+
+        :param frequency: the frequency at which gamma is computed [Hz]
+        :return: gamma: nonlinear interference coefficient for f in frequency [1/(W m)]
+        """
+        frequency = self.params.ref_frequency if frequency is None else frequency
+        return self.params.gamma_scaling(frequency)
+
     def cr(self, frequency):
-        """Returns the raman efficiency matrix including the vibrational loss
+        """Returns the raman gain coefficient matrix including the vibrational loss
 
         :param frequency: the frequency at which cr is computed [Hz]
-        :return: cr: raman efficiency matrix [1 / (W m)]
+        :return: cr: raman gain coefficient matrix [1 / (W m)]
         """
         df = outer(ones(frequency.shape), frequency) - outer(frequency, ones(frequency.shape))
-        cr = self._cr_function(df)
+        effective_area_overlap = self.params.effective_area_overlap(frequency, frequency)
+        cr = interp(df, self.params.raman_coefficient.frequency_offset,
+                    self.params.raman_coefficient.normalized_gamma_raman) * frequency / effective_area_overlap
         vibrational_loss = outer(frequency, ones(frequency.shape)) / outer(ones(frequency.shape), frequency)
-        return cr * (cr >= 0) + cr * (cr < 0) * vibrational_loss  # Raman efficiency [1/(W m)]
+        return cr * (cr >= 0) + cr * (cr < 0) * vibrational_loss  # [1/(W m)]
 
     def chromatic_dispersion(self, freq=None):
         """Returns accumulated chromatic dispersion (CD).
@@ -563,8 +631,8 @@ class Fiber(_Node):
         :return: chromatic dispersion: the accumulated dispersion [s/m]
         """
         freq = self.params.ref_frequency if freq is None else freq
-        beta2 = self.params.beta2
-        beta3 = self.params.beta3
+        beta2 = self.beta2(freq)
+        beta3 = self.beta3(freq)
         ref_f = self.params.ref_frequency
         length = self.params.length
         beta = beta2 + 2 * pi * beta3 * (freq - ref_f)
@@ -593,6 +661,9 @@ class Fiber(_Node):
         # chromatic dispersion and pmd variations
         spectral_info.chromatic_dispersion += self.chromatic_dispersion(spectral_info.frequency)
         spectral_info.pmd = sqrt(spectral_info.pmd ** 2 + self.pmd ** 2)
+
+        # latency
+        spectral_info.latency += self.params.latency
 
         # apply the attenuation due to the fiber losses
         attenuation_fiber = stimulated_raman_scattering.loss_profile[:, -1]
@@ -666,6 +737,9 @@ class RamanFiber(Fiber):
         # chromatic dispersion and pmd variations
         spectral_info.chromatic_dispersion += self.chromatic_dispersion(spectral_info.frequency)
         spectral_info.pmd = sqrt(spectral_info.pmd ** 2 + self.pmd ** 2)
+
+        # latency
+        spectral_info.latency += self.params.latency
 
         # apply the attenuation due to the fiber losses
         attenuation_fiber = stimulated_raman_scattering.loss_profile[:spectral_info.number_of_channels, -1]

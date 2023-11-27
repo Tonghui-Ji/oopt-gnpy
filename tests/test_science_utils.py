@@ -9,10 +9,11 @@ are tested.
 from pathlib import Path
 from pandas import read_csv
 from numpy.testing import assert_allclose
-from numpy import array, genfromtxt
+from numpy import array
 import pytest
 
-from gnpy.core.info import create_input_spectral_information, create_arbitrary_spectral_information, Pref, ReferenceCarrier
+from gnpy.core.info import create_input_spectral_information, create_arbitrary_spectral_information, Pref, \
+    ReferenceCarrier
 from gnpy.core.elements import Fiber, RamanFiber
 from gnpy.core.parameters import SimParams
 from gnpy.tools.json_io import load_json
@@ -23,13 +24,14 @@ TEST_DIR = Path(__file__).parent
 
 
 def test_fiber():
-    """ Test the accuracy of propagating the Fiber."""
+    """Test the accuracy of propagating the Fiber."""
     fiber = Fiber(**load_json(TEST_DIR / 'data' / 'test_science_utils_fiber_config.json'))
 
     # fix grid spectral information generation
     spectral_info_input = create_input_spectral_information(f_min=191.3e12, f_max=196.1e12, roll_off=0.15,
                                                             baud_rate=32e9, power=1e-3, spacing=50e9, tx_osnr=40.0,
-                                                            ref_carrier=ReferenceCarrier(baud_rate=32e9, slot_width=50e9))
+                                                            ref_carrier=
+                                                            ReferenceCarrier(baud_rate=32e9, slot_width=50e9))
     # propagation
     spectral_info_out = fiber(spectral_info_input)
 
@@ -65,7 +67,7 @@ def test_fiber():
 
 @pytest.mark.usefixtures('set_sim_params')
 def test_raman_fiber():
-    """ Test the accuracy of propagating the RamanFiber."""
+    """Test the accuracy of propagating the RamanFiber."""
     # spectral information generation
     spectral_info_input = create_input_spectral_information(f_min=191.3e12, f_max=196.1e12, roll_off=0.15,
                                                             baud_rate=32e9, power=1e-3, spacing=50e9, tx_osnr=40.0,
@@ -92,7 +94,7 @@ def test_raman_fiber():
      (0.5, 81, "Lumped loss positions must be between 0 and the fiber length (80.0 km), boundaries excluded.")))
 @pytest.mark.usefixtures('set_sim_params')
 def test_fiber_lumped_losses(loss, position, errmsg, set_sim_params):
-    """ Lumped losses length sanity checking."""
+    """Lumped losses length sanity checking."""
     SimParams.set_params(load_json(TEST_DIR / 'data' / 'sim_params.json'))
     fiber_dict = load_json(TEST_DIR / 'data' / 'test_lumped_losses_raman_fiber_config.json')
     fiber_dict['params']['lumped_losses'] = [{'position': position, 'loss': loss}]
@@ -103,11 +105,12 @@ def test_fiber_lumped_losses(loss, position, errmsg, set_sim_params):
 
 @pytest.mark.usefixtures('set_sim_params')
 def test_fiber_lumped_losses_srs(set_sim_params):
-    """ Test the accuracy of Fiber with lumped losses propagation."""
+    """Test the accuracy of Fiber with lumped losses propagation."""
     # spectral information generation
     spectral_info_input = create_input_spectral_information(f_min=191.3e12, f_max=196.1e12, roll_off=0.15,
                                                             baud_rate=32e9, power=1e-3, spacing=50e9, tx_osnr=40.0,
-                                                            ref_carrier=ReferenceCarrier(baud_rate=32e9, slot_width=50e9))
+                                                            ref_carrier=
+                                                            ReferenceCarrier(baud_rate=32e9, slot_width=50e9))
 
     SimParams.set_params(load_json(TEST_DIR / 'data' / 'sim_params.json'))
     fiber = Fiber(**load_json(TEST_DIR / 'data' / 'test_lumped_losses_raman_fiber_config.json'))
@@ -118,18 +121,18 @@ def test_fiber_lumped_losses_srs(set_sim_params):
     stimulated_raman_scattering = RamanSolver.calculate_stimulated_raman_scattering(
         spectral_info_input, fiber)
     power_profile = stimulated_raman_scattering.power_profile
-    expected_power_profile = genfromtxt(TEST_DIR / 'data' / 'test_lumped_losses_fiber_no_pumps.csv', delimiter=',')
+    expected_power_profile = read_csv(TEST_DIR / 'data' / 'test_lumped_losses_fiber_no_pumps.csv', header=None)
     assert_allclose(power_profile, expected_power_profile, rtol=1e-3)
 
     # with Raman pumps
-    expected_power_profile = genfromtxt(TEST_DIR / 'data' / 'test_lumped_losses_raman_fiber.csv', delimiter=',')
+    expected_power_profile = read_csv(TEST_DIR / 'data' / 'test_lumped_losses_raman_fiber.csv', header=None)
     stimulated_raman_scattering = RamanSolver.calculate_stimulated_raman_scattering(
         spectral_info_input, raman_fiber)
     power_profile = stimulated_raman_scattering.power_profile
     assert_allclose(power_profile, expected_power_profile, rtol=1e-3)
 
     # without Stimulated Raman Scattering
-    expected_power_profile = genfromtxt(TEST_DIR / 'data' / 'test_lumped_losses_fiber_no_raman.csv', delimiter=',')
+    expected_power_profile = read_csv(TEST_DIR / 'data' / 'test_lumped_losses_fiber_no_raman.csv', header=None)
     stimulated_raman_scattering = RamanSolver.calculate_attenuation_profile(spectral_info_input, fiber)
     power_profile = stimulated_raman_scattering.power_profile
     assert_allclose(power_profile, expected_power_profile, rtol=1e-3)

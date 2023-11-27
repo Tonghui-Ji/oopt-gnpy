@@ -11,6 +11,7 @@ This module contains utility functions that are used with gnpy.
 from csv import writer
 from numpy import pi, cos, sqrt, log10, linspace, zeros, shape, where, logical_and, mean
 from scipy import constants
+from copy import deepcopy
 
 from gnpy.core.exceptions import ConfigurationError
 
@@ -213,7 +214,7 @@ freq2wavelength = constants.nu2lambda
 
 
 def freq2wavelength(value):
-    """ Converts frequency units to wavelength units.
+    """Converts frequency units to wavelength units.
 
     >>> round(freq2wavelength(191.35e12) * 1e9, 3)
     1566.723
@@ -247,8 +248,7 @@ def per_label_average(values, labels):
 
 
 def pretty_summary_print(summary):
-    """Build a prettty string that shows the summary dict values per label with 2 digits
-    """
+    """Build a prettty string that shows the summary dict values per label with 2 digits"""
     if len(summary) == 1:
         return f'{list(summary.values())[0]:.2f}'
     text = ', '.join([f'{label}: {value:.2f}' for label, value in summary.items()])
@@ -256,7 +256,7 @@ def pretty_summary_print(summary):
 
 
 def deltawl2deltaf(delta_wl, wavelength):
-    """ deltawl2deltaf(delta_wl, wavelength):
+    """deltawl2deltaf(delta_wl, wavelength):
     delta_wl is BW in wavelength units
     wavelength is the center wl
     units for delta_wl and wavelength must be same
@@ -274,9 +274,9 @@ def deltawl2deltaf(delta_wl, wavelength):
 
 
 def deltaf2deltawl(delta_f, frequency):
-    """ deltawl2deltaf(delta_f, frequency):
-        converts delta frequency to delta wavelength
-        units for delta_wl and wavelength must be same
+    """convert delta frequency to delta wavelength
+
+    Units for delta_wl and wavelength must be same.
 
     :param delta_f: delta frequency in same units as frequency
     :param frequency: frequency BW is relevant for
@@ -291,8 +291,7 @@ def deltaf2deltawl(delta_f, frequency):
 
 
 def rrc(ffs, baud_rate, alpha):
-    """ rrc(ffs, baud_rate, alpha): computes the root-raised cosine filter
-    function.
+    """compute the root-raised cosine filter function
 
     :param ffs: A numpy array of frequencies
     :param baud_rate: The Baud Rate of the System
@@ -318,7 +317,7 @@ def rrc(ffs, baud_rate, alpha):
 
 
 def merge_amplifier_restrictions(dict1, dict2):
-    """Updates contents of dicts recursively
+    """Update contents of dicts recursively
 
     >>> d1 = {'params': {'restrictions': {'preamp_variety_list': [], 'booster_variety_list': []}}}
     >>> d2 = {'params': {'target_pch_out_db': -20}}
@@ -413,3 +412,43 @@ def convert_length(value, units):
         return value * 1e3
     else:
         raise ConfigurationError(f'Cannot convert length in "{units}" into meters')
+
+
+def replace_none(dictionary):
+    """ Replaces None with inf values in a frequency slots dict
+
+    >>> replace_none({'N': 3, 'M': None})
+    {'N': 3, 'M': inf}
+
+    """
+    for key, val in dictionary.items():
+        if val is None:
+            dictionary[key] = float('inf')
+        if val == float('inf'):
+            dictionary[key] = None
+    return dictionary
+
+
+def order_slots(slots):
+    """ Order frequency slots from larger slots to smaller ones up to None
+
+    >>> l = [{'N': 3, 'M': None}, {'N': 2, 'M': 1}, {'N': None, 'M': None},{'N': 7, 'M': 2},{'N': None, 'M': 1} , {'N': None, 'M': 0}]
+    >>> order_slots(l)
+    ([7, 2, None, None, 3, None], [2, 1, 1, 0, None, None], [3, 1, 4, 5, 0, 2])
+    """
+    slots_list = deepcopy(slots)
+    slots_list = [replace_none(e) for e in slots_list]
+    for i, e in enumerate(slots_list):
+        e['i'] = i
+    slots_list = sorted(slots_list, key=lambda x: (-x['M'], x['N']) if x['M'] != float('inf') else (x['M'], x['N']))
+    slots_list = [replace_none(e) for e in slots_list]
+    return [e['N'] for e in slots_list], [e['M'] for e in slots_list], [e['i'] for e in slots_list]
+
+
+def restore_order(elements, order):
+    """ Use order to re-order the element of the list, and ignore None values
+
+    >>> restore_order([7, 2, None, None, 3, None], [3, 1, 4, 5, 0, 2])
+    [3, 2, 7]
+    """
+    return [elements[i[0]] for i in sorted(enumerate(order), key=lambda x:x[1]) if elements[i[0]] is not None]

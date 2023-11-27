@@ -25,7 +25,6 @@ from gnpy.core.elements import Transceiver, Roadm
 from gnpy.core.utils import lin2db
 from gnpy.core.info import create_input_spectral_information, carriers_to_spectral_information, ReferenceCarrier
 from gnpy.core.exceptions import ServiceError, DisjunctionError
-import gnpy.core.ansi_escapes as ansi_escapes
 from copy import deepcopy
 from csv import writer
 from math import ceil
@@ -35,15 +34,14 @@ LOGGER = getLogger(__name__)
 RequestParams = namedtuple('RequestParams', 'request_id source destination bidir trx_type'
                            ' trx_mode nodes_list loose_list spacing power nb_channel f_min'
                            ' f_max format baud_rate OSNR penalties bit_rate'
-                           ' roll_off tx_osnr min_spacing cost path_bandwidth effective_freq_slot')
+                           ' roll_off tx_osnr min_spacing cost path_bandwidth effective_freq_slot'
+                           ' equalization_offset_db')
 DisjunctionParams = namedtuple('DisjunctionParams', 'disjunction_id relaxable link_diverse'
                                ' node_diverse disjunctions_req')
 
 
 class PathRequest:
-    """ the class that contains all attributes related to a request
-    """
-
+    """the class that contains all attributes related to a request"""
     def __init__(self, *args, **params):
         params = RequestParams(**params)
         self.request_id = params.request_id
@@ -70,9 +68,10 @@ class PathRequest:
         self.cost = params.cost
         self.path_bandwidth = params.path_bandwidth
         if params.effective_freq_slot is not None:
-            self.N = params.effective_freq_slot['N']
-            self.M = params.effective_freq_slot['M']
+            self.N = [s['N'] for s in params.effective_freq_slot]
+            self.M = [s['M'] for s in params.effective_freq_slot]
         self.initial_spectrum = None
+        self.offset_db = params.equalization_offset_db
 
     def __str__(self):
         return '\n\t'.join([f'{type(self).__name__} {self.request_id}',
@@ -104,8 +103,7 @@ class PathRequest:
 
 
 class Disjunction:
-    """ the class that contains all attributes related to disjunction constraints
-    """
+    """the class that contains all attributes related to disjunction constraints"""
 
     def __init__(self, *args, **params):
         params = DisjunctionParams(**params)
@@ -150,8 +148,7 @@ class ResultElement:
 
     @property
     def detailed_path_json(self):
-        """ a function that builds path object for normal and blocking cases
-        """
+        """a function that builds path object for normal and blocking cases"""
         index = 0
         pro_list = []
         for element in self.computed_path:
@@ -175,10 +172,10 @@ class ResultElement:
                 temp = {
                     'path-route-object': {
                         'index': index,
-                        "label-hop": {
-                            "N": self.path_request.N,
-                            "M": self.path_request.M
-                        },
+                        "label-hop": [{
+                            "N": n,
+                            "M": m
+                        } for n, m in zip(self.path_request.N, self.path_request.M)],
                     }
                 }
                 pro_list.append(temp)
@@ -207,11 +204,9 @@ class ResultElement:
 
     @property
     def path_properties(self):
-        """ a function that returns the path properties (metrics, crossed elements) into a dict
-        """
+        """a function that returns the path properties (metrics, crossed elements) into a dict"""
         def path_metric(pth, req):
-            """ creates the metrics dictionary
-            """
+            """creates the metrics dictionary"""
             return [
                 {
                     'metric-type': 'SNR-bandwidth',
@@ -253,8 +248,7 @@ class ResultElement:
 
     @property
     def pathresult(self):
-        """ create the result dictionnary (response for a request)
-        """
+        """create the result dictionnary (response for a request)"""
         try:
             if self.path_request.blocking_reason in BLOCKING_NOPATH:
                 response = {
@@ -292,7 +286,6 @@ def compute_constrained_path(network, req):
         # been corrected and harmonized before
         msg = (f'Request {req.request_id} malformed list of nodes: last node should '
                'be destination trx')
-        LOGGER.critical(msg)
         raise ValueError()
 
     trx = [n for n in network if isinstance(n, Transceiver)]
@@ -307,10 +300,9 @@ def compute_constrained_path(network, req):
         path_generator = shortest_simple_paths(network, source, destination, weight='weight')
         total_path = next(path for path in path_generator if ispart(nodes_list, path))
     except NetworkXNoPath:
-        msg = (f'{ansi_escapes.yellow}Request {req.request_id} could not find a path from'
-               f' {source.uid} to node: {destination.uid} in network topology{ansi_escapes.reset}')
+        msg = (f'Request {req.request_id} could not find a path from'
+               f' {source.uid} to node: {destination.uid} in network topology')
         LOGGER.critical(msg)
-        print(msg)
         req.blocking_reason = 'NO_PATH'
         total_path = []
     except StopIteration:
@@ -319,24 +311,21 @@ def compute_constrained_path(network, req):
         # last node which is the transceiver)
         # if all nodes i n node_list are LOOSE constraint, skip the constraints and find
         # a path w/o constraints, else there is no possible path
-        print(f'{ansi_escapes.yellow}Request {req.request_id} could not find a path crossing '
-              f'{[el.uid for el in nodes_list[:-1]]} in network topology{ansi_escapes.reset}')
+        LOGGER.warning(f'Request {req.request_id} could not find a path crossing '
+                       f'{[el.uid for el in nodes_list[:-1]]} in network topology')
 
         if 'STRICT' not in req.loose_list[:-1]:
-            msg = (f'{ansi_escapes.yellow}Request {req.request_id} could not find a path with user_'
-                   f'include node constraints{ansi_escapes.reset}')
-            LOGGER.info(msg)
-            print(f'constraint ignored')
+            msg = (f'Request {req.request_id} could not find a path with user_'
+                   f'include node constraints. Constraint ignored')
+            LOGGER.warning(msg)
             total_path = dijkstra_path(network, source, destination, weight='weight')
         else:
             # one STRICT makes the whole list STRICT
-            msg = (f'{ansi_escapes.yellow}Request {req.request_id} could not find a path with user '
-                   f'include node constraints.\nNo path computed{ansi_escapes.reset}')
+            msg = (f'Request {req.request_id} could not find a path with user '
+                   f'include node constraints.\nNo path computed')
             LOGGER.critical(msg)
-            print(msg)
             req.blocking_reason = 'NO_PATH_WITH_CONSTRAINT'
             total_path = []
-
     return total_path
 
 
@@ -350,15 +339,15 @@ def ref_carrier(equipment):
 
 
 def propagate(path, req, equipment):
-    """ propagates signals in each element according to initial spectrum set by user
-    """
+    """propagates signals in each element according to initial spectrum set by user"""
     if req.initial_spectrum is not None:
         si = carriers_to_spectral_information(initial_spectrum=req.initial_spectrum,
                                               power=req.power, ref_carrier=ref_carrier(equipment))
     else:
         si = create_input_spectral_information(
             f_min=req.f_min, f_max=req.f_max, roll_off=req.roll_off, baud_rate=req.baud_rate,
-            power=req.power, spacing=req.spacing, tx_osnr=req.tx_osnr, ref_carrier=ref_carrier(equipment))
+            power=req.power, spacing=req.spacing, tx_osnr=req.tx_osnr, delta_pdb=req.offset_db,
+            ref_carrier=ref_carrier(equipment))
     for i, el in enumerate(path):
         if isinstance(el, Roadm):
             si = el(si, degree=path[i+1].uid)
@@ -376,20 +365,21 @@ def propagate(path, req, equipment):
 
 def propagate_and_optimize_mode(path, req, equipment):
     # if mode is unknown : loops on the modes starting from the highest baudrate fiting in the
-    # step 1: create an ordered list of modes based on baudrate
-    baudrate_to_explore = list(set([this_mode['baud_rate']
-                                    for this_mode in equipment['Transceiver'][req.tsp].mode
-                                    if float(this_mode['min_spacing']) <= req.spacing]))
+    # step 1: create an ordered list of modes based on baudrate and power offset
+    # order higher baudrate with higher power offset first
+    baudrate_offset_to_explore = list(set([(this_mode['baud_rate'], this_mode['equalization_offset_db'])
+                                           for this_mode in equipment['Transceiver'][req.tsp].mode
+                                           if float(this_mode['min_spacing']) <= req.spacing]))
     # TODO be carefull on limits cases if spacing very close to req spacing eg 50.001 50.000
-    baudrate_to_explore = sorted(baudrate_to_explore, reverse=True)
-    if baudrate_to_explore:
+    baudrate_offset_to_explore = sorted(baudrate_offset_to_explore, reverse=True)
+    if baudrate_offset_to_explore:
         # at least 1 baudrate can be tested wrt spacing
-        for this_br in baudrate_to_explore:
+        for (this_br, this_offset) in baudrate_offset_to_explore:
             modes_to_explore = [this_mode for this_mode in equipment['Transceiver'][req.tsp].mode
-                                if this_mode['baud_rate'] == this_br and
-                                float(this_mode['min_spacing']) <= req.spacing]
+                                if this_mode['baud_rate'] == this_br
+                                and float(this_mode['min_spacing']) <= req.spacing]
             modes_to_explore = sorted(modes_to_explore,
-                                      key=lambda x: x['bit_rate'], reverse=True)
+                                      key=lambda x: (x['bit_rate'], x['equalization_offset_db']), reverse=True)
             # step2: computes propagation for each baudrate: stop and select the first that passes
             # TODO: the case of roll off is not included: for now use SI one
             # TODO: if the loop in mode optimization does not have a feasible path, then bugs
@@ -401,6 +391,7 @@ def propagate_and_optimize_mode(path, req, equipment):
             spc_info = create_input_spectral_information(f_min=req.f_min, f_max=req.f_max,
                                                          roll_off=equipment['SI']['default'].roll_off,
                                                          baud_rate=this_br, power=req.power, spacing=req.spacing,
+                                                         delta_pdb=this_offset,
                                                          tx_osnr=req.tx_osnr, ref_carrier=ref_carrier(equipment))
             for i, el in enumerate(path):
                 if isinstance(el, Roadm):
@@ -428,22 +419,19 @@ def propagate_and_optimize_mode(path, req, equipment):
 
         # returns the last propagated path and mode
         msg = f'\tWarning! Request {req.request_id}: no mode satisfies path SNR requirement.\n'
-        print(msg)
-        LOGGER.info(msg)
+        LOGGER.warning(msg)
         req.blocking_reason = 'NO_FEASIBLE_MODE'
         return path, last_explored_mode
     else:
         # no baudrate satisfying spacing
         msg = f'\tWarning! Request {req.request_id}: no baudrate satisfies spacing requirement.\n'
-        print(msg)
-        LOGGER.info(msg)
+        LOGGER.warning(msg)
         req.blocking_reason = 'NO_FEASIBLE_BAUDRATE_WITH_SPACING'
         return [], None
 
 
 def jsontopath_metric(path_metric):
-    """ a functions that reads resulting metric  from json string
-    """
+    """a functions that reads resulting metric  from json string"""
     output_snr = next(e['accumulative-value']
                       for e in path_metric if e['metric-type'] == 'SNR-0.1nm')
     output_snrbandwidth = next(e['accumulative-value']
@@ -461,9 +449,7 @@ def jsontopath_metric(path_metric):
 
 
 def jsontoparams(my_p, tsp, mode, equipment):
-    """ a function that derives optical params from transponder type and mode
-        supports the no mode case
-    """
+    """a function that derives optical params from transponder type and mode supports the no mode case"""
     temp = []
     for elem in my_p['path-properties']['path-route-objects']:
         if 'num-unnum-hop' in elem['path-route-object']:
@@ -473,8 +459,8 @@ def jsontoparams(my_p, tsp, mode, equipment):
     temp2 = []
     for elem in my_p['path-properties']['path-route-objects']:
         if 'label-hop' in elem['path-route-object'].keys():
-            temp2.append(f'{elem["path-route-object"]["label-hop"]["N"]}, ' +
-                         f'{elem["path-route-object"]["label-hop"]["M"]}')
+            temp2.append(f'{[e["N"] for e in elem["path-route-object"]["label-hop"]]}, '
+                         + f'{[e["M"] for e in elem["path-route-object"]["label-hop"]]}')
     # OrderedDict.fromkeys returns the unique set of strings.
     # TODO: if spectrum changes along the path, we should be able to give the segments
     #       eg for regeneration case
@@ -498,10 +484,10 @@ def jsontoparams(my_p, tsp, mode, equipment):
 
 
 def jsontocsv(json_data, equipment, fileout):
-    """ reads json path result file in accordance with:
-        Yang model for requesting Path Computation
-        draft-ietf-teas-yang-path-computation-01.txt.
-        and write results in an CSV file
+    """reads json path result file in accordance with:
+    Yang model for requesting Path Computation
+    draft-ietf-teas-yang-path-computation-01.txt.
+    and write results in an CSV file
     """
     mywriter = writer(fileout)
     mywriter.writerow(('response-id', 'source', 'destination', 'path_bandwidth', 'Pass?',
@@ -836,13 +822,13 @@ def compute_path_dsjctn(network, equipment, pathreqlist, disjunctions_list):
                     if not ispart(allpaths[id(pth)].req.nodes_list, pth):
                         testispartok = False
                         if 'STRICT' in allpaths[id(pth)].req.loose_list:
-                            LOGGER.info(f'removing solution from candidate paths\n{pth}')
+                            LOGGER.debug(f'removing solution from candidate paths\n{pth}')
                             testispartnokloose = False
                             break
             if testispartok:
                 temp.append(sol)
             elif testispartnokloose:
-                LOGGER.info(f'Adding solution as alternate solution not satisfying constraint\n{pth}')
+                LOGGER.debug(f'Adding solution as alternate solution not satisfying constraint\n{pth}')
                 alternatetemp.append(sol)
         if temp:
             candidates[this_d.disjunction_id] = temp
@@ -864,9 +850,7 @@ def compute_path_dsjctn(network, equipment, pathreqlist, disjunctions_list):
                     # remove duplicated candidates
                     candidates = remove_candidate(candidates, allpaths, allpaths[id(pth)].req, pth)
         else:
-            msg = f'No disjoint path found with added constraint'
-            LOGGER.critical(msg)
-            print(f'{msg}\nComputation stopped.')
+            msg = 'No disjoint path found with added constraint\nComputation stopped.'
             # TODO in this case: replay step 5  with the candidate without constraints
             raise DisjunctionError(msg)
 
@@ -887,8 +871,7 @@ def compute_path_dsjctn(network, equipment, pathreqlist, disjunctions_list):
 
 
 def isdisjoint(pth1, pth2):
-    """ returns 0 if disjoint
-    """
+    """returns 0 if disjoint"""
     edge1 = list(pairwise(pth1))
     edge2 = list(pairwise(pth2))
     for edge in edge1:
@@ -898,9 +881,9 @@ def isdisjoint(pth1, pth2):
 
 
 def find_reversed_path(pth):
-    """ select of intermediate roadms and find the path between them
-        note that this function may not give an exact result in case of multiple
-        links between two adjacent nodes.
+    """select of intermediate roadms and find the path between them
+    note that this function may not give an exact result in case of multiple
+    links between two adjacent nodes.
     """
     # TODO add some indication on elements to indicate from which other they
     # are the reversed direction. This is partly done with oms indication
@@ -923,9 +906,8 @@ def find_reversed_path(pth):
             # concatenation should be [roadma el1 el2 roadmb el3 el4 roadmc]
             reversed_path = list(OrderedDict.fromkeys(reversed_path))
         else:
-            msg = f'Error while handling reversed path {pth[-1].uid} to {pth[0].uid}:' +\
-                ' can not handle unidir topology. TO DO.'
-            LOGGER.critical(msg)
+            msg = f'Error while handling reversed path {pth[-1].uid} to {pth[0].uid}:' \
+                + ' can not handle unidir topology. TO DO.'
             raise ValueError(msg)
     reversed_path.append(pth[0])
 
@@ -933,9 +915,7 @@ def find_reversed_path(pth):
 
 
 def ispart(ptha, pthb):
-    """ the functions takes two paths a and b and retrns True
-        if all a elements are part of b and in the same order
-    """
+    """the functions takes two paths a and b and retrns True if all a elements are part of b and in the same order"""
     j = 0
     for elem in ptha:
         if elem in pthb:
@@ -949,8 +929,7 @@ def ispart(ptha, pthb):
 
 
 def remove_candidate(candidates, allpaths, rqst, pth):
-    """ filter duplicate candidates
-    """
+    """filter duplicate candidates"""
     # print(f'coucou {rqst.request_id}')
     for key, candidate in candidates.items():
         temp = candidate.copy()
@@ -965,8 +944,7 @@ def remove_candidate(candidates, allpaths, rqst, pth):
 
 
 def compare_reqs(req1, req2, disjlist):
-    """ compare two requests: returns True or False
-    """
+    """compare two requests: returns True or False"""
     dis1 = [d for d in disjlist if req1.request_id in d.disjunctions_req]
     dis2 = [d for d in disjlist if req2.request_id in d.disjunctions_req]
     same_disj = False
@@ -999,28 +977,31 @@ def compare_reqs(req1, req2, disjlist):
             req1.format == req2.format and \
             req1.OSNR == req2.OSNR and \
             req1.roll_off == req2.roll_off and \
-            same_disj and \
-            getattr(req1, 'N', None) is None and getattr(req2, 'N', None) is None and \
-            getattr(req1, 'M', None) is None and getattr(req2, 'M', None) is None:
+            same_disj:
         return True
     else:
         return False
 
 
 def requests_aggregation(pathreqlist, disjlist):
-    """ this function aggregates requests so that if several requests
-        exist between same source and destination and with same transponder type
+    """this function aggregates requests so that if several requests
+    exist between same source and destination and with same transponder type
+    If transponder mode is defined and identical, then also agregates demands.
     """
     # todo maybe add conditions on mode ??, spacing ...
     # currently if undefined takes the default values
     local_list = pathreqlist.copy()
     for req in pathreqlist:
         for this_r in local_list:
-            if req.request_id != this_r.request_id and compare_reqs(req, this_r, disjlist):
+            if req.request_id != this_r.request_id and compare_reqs(req, this_r, disjlist) and\
+                    this_r.tsp_mode is not None:
                 # aggregate
                 this_r.path_bandwidth += req.path_bandwidth
+                this_r.N = this_r.N + req.N
+                this_r.M = this_r.M + req.M
                 temp_r_id = this_r.request_id
                 this_r.request_id = ' | '.join((this_r.request_id, req.request_id))
+
                 # remove request from list
                 local_list.remove(req)
                 # todo change also disjunction req with new demand
@@ -1037,23 +1018,22 @@ def requests_aggregation(pathreqlist, disjlist):
 
 
 def correct_json_route_list(network, pathreqlist):
-    """ all names in list should be exact name in the network, and there is no ambiguity
-        This function only checks that list is correct, warns user if the name is incorrect and
-        suppresses the constraint it it is loose or raises an error if it is strict
+    """all names in list should be exact name in the network, and there is no ambiguity
+
+    This function only checks that list is correct, warns user if the name is incorrect and
+    suppresses the constraint it it is loose or raises an error if it is strict
     """
     all_uid = [n.uid for n in network.nodes()]
     transponders = [n.uid for n in network.nodes() if isinstance(n, Transceiver)]
     for pathreq in pathreqlist:
         if pathreq.source not in transponders:
-            msg = f'{ansi_escapes.red}Request: {pathreq.request_id}: could not find transponder' +\
-                f' source : {pathreq.source}.{ansi_escapes.reset}'
-            LOGGER.critical(msg)
+            msg = f'Request: {pathreq.request_id}: could not find transponder' \
+                + f' source : {pathreq.source}.'
             raise ServiceError(msg)
 
         if pathreq.destination not in transponders:
-            msg = f'{ansi_escapes.red}Request: {pathreq.request_id}: could not find transponder' +\
-                f' destination : {pathreq.destination}.{ansi_escapes.reset}'
-            LOGGER.critical(msg)
+            msg = f'Request: {pathreq.request_id}: could not find transponder' \
+                + f' destination : {pathreq.destination}.'
             raise ServiceError(msg)
 
         # silently remove source and dest nodes from the list
@@ -1072,24 +1052,21 @@ def correct_json_route_list(network, pathreqlist):
                     # if no matching can be found in the network just ignore this constraint
                     # if it is a loose constraint
                     # warns the user that this node is not part of the topology
-                    msg = f'{ansi_escapes.yellow}invalid route node specified:\n\t\'{n_id}\',' +\
-                        f' could not use it as constraint, skipped!{ansi_escapes.reset}'
-                    print(msg)
-                    LOGGER.info(msg)
+                    msg = f'invalid route node specified:\n\t\'{n_id}\',' \
+                        + ' could not use it as constraint, skipped!'
+                    LOGGER.warning(msg)
                     pathreq.loose_list.pop(pathreq.nodes_list.index(n_id))
                     pathreq.nodes_list.remove(n_id)
                 else:
-                    msg = f'{ansi_escapes.red}could not find node:\n\t \'{n_id}\' in network' +\
-                        f' topology. Strict constraint can not be applied.{ansi_escapes.reset}'
-                    LOGGER.critical(msg)
+                    msg = f'could not find node:\n\t \'{n_id}\' in network' \
+                        + ' topology. Strict constraint can not be applied.'
                     raise ServiceError(msg)
 
     return pathreqlist
 
 
 def deduplicate_disjunctions(disjn):
-    """ clean disjunctions to remove possible repetition
-    """
+    """clean disjunctions to remove possible repetition"""
     local_disjn = disjn.copy()
     for elem in local_disjn:
         for dis_elem in local_disjn:
@@ -1100,8 +1077,9 @@ def deduplicate_disjunctions(disjn):
 
 
 def compute_path_with_disjunction(network, equipment, pathreqlist, pathlist):
-    """ use a list but a dictionnary might be helpful to find path based on request_id
-        TODO change all these req, dsjct, res lists into dict !
+    """use a list but a dictionnary might be helpful to find path based on request_id
+
+    TODO change all these req, dsjct, res lists into dict !
     """
     path_res_list = []
     reversed_path_res_list = []
@@ -1112,10 +1090,10 @@ def compute_path_with_disjunction(network, equipment, pathreqlist, pathlist):
         # use the power specified in requests but might be different from the one
         # specified for design the power is an optional parameter for requests
         # definition if optional, use the one defines in eqt_config.json
-        print(f'request {pathreq.request_id}')
-        print(f'Computing path from {pathreq.source} to {pathreq.destination}')
-        # adding first node to be clearer on the output
-        print(f'with path constraint: {[pathreq.source] + pathreq.nodes_list}')
+        msg = f'\n\trequest {pathreq.request_id}\n' \
+              + f'\tComputing path from {pathreq.source} to {pathreq.destination}\n' \
+              + f'\twith path constraint: {[pathreq.source] + pathreq.nodes_list}'
+        # # adding first node to be clearer on the output
 
         # pathlist[i] contains the whole path information for request i
         # last element is a transciver and where the result of the propagation is
@@ -1125,7 +1103,8 @@ def compute_path_with_disjunction(network, equipment, pathreqlist, pathlist):
         # may use the same transponder for the performance simulation. This is why
         # we use deepcopy: to ensure that each propagation is recorded and not overwritten
         total_path = deepcopy(pathlist[i])
-        print(f'Computed path (roadms):{[e.uid for e in total_path  if isinstance(e, Roadm)]}')
+        msg = msg + f'\n\tComputed path (roadms):{[e.uid for e in total_path  if isinstance(e, Roadm)]}'
+        LOGGER.info(msg)
         # for debug
         # print(f'{pathreq.baud_rate}   {pathreq.power}   {pathreq.spacing}   {pathreq.nb_channel}')
         if total_path:
@@ -1136,14 +1115,12 @@ def compute_path_with_disjunction(network, equipment, pathreqlist, pathlist):
                 snr01nm_with_penalty = total_path[-1].snr_01nm - total_path[-1].total_penalty
                 min_ind = argmin(snr01nm_with_penalty)
                 if round(snr01nm_with_penalty[min_ind], 2) < pathreq.OSNR + equipment['SI']['default'].sys_margins:
-                    msg = f'\tWarning! Request {pathreq.request_id} computed path from' +\
-                          f' {pathreq.source} to {pathreq.destination} does not pass with {pathreq.tsp_mode}' +\
-                          f'\n\tcomputed SNR in 0.1nm = {round(total_path[-1].snr_01nm[min_ind], 2)}' +\
-                          f'\n\tCD penalty = {round(total_path[-1].penalties["chromatic_dispersion"][min_ind], 2)}' +\
-                          f'\n\tPMD penalty = {round(total_path[-1].penalties["pmd"][min_ind], 2)}' +\
-                          f'\n\trequired osnr = {pathreq.OSNR}' +\
-                          f'\n\tsystem margin = {equipment["SI"]["default"].sys_margins}'
-                    print(msg)
+                    msg = f'\tWarning! Request {pathreq.request_id} computed path from' \
+                          + f' {pathreq.source} to {pathreq.destination} does not pass with {pathreq.tsp_mode}' \
+                          + f'\n\tcomputed SNR in 0.1nm = {round(total_path[-1].snr_01nm[min_ind], 2)}'
+                    msg = _penalty_msg(total_path, msg, min_ind) \
+                        + f'\n\trequired osnr = {pathreq.OSNR}' \
+                        + f'\n\tsystem margin = {equipment["SI"]["default"].sys_margins}'
                     LOGGER.warning(msg)
                     pathreq.blocking_reason = 'MODE_NOT_FEASIBLE'
             else:
@@ -1179,22 +1156,20 @@ def compute_path_with_disjunction(network, equipment, pathreqlist, pathlist):
             if pathreq.bidir and pathreq.baud_rate is not None:
                 # Both directions requested, and a feasible mode was found
                 rev_p = deepcopy(reversed_path)
-
-                print(f'\n\tPropagating Z to A direction {pathreq.destination} to {pathreq.source}')
-                print(f'\tPath (roadsm) {[r.uid for r in rev_p if isinstance(r,Roadm)]}\n')
+                msg = f'\n\tPropagating Z to A direction {pathreq.destination} to {pathreq.source}\n' \
+                      + f'\tPath (roadms) {[r.uid for r in rev_p if isinstance(r,Roadm)]}\n'
+                LOGGER.info(msg)
                 propagate(rev_p, pathreq, equipment)
                 propagated_reversed_path = rev_p
                 snr01nm_with_penalty = rev_p[-1].snr_01nm - rev_p[-1].total_penalty
                 min_ind = argmin(snr01nm_with_penalty)
                 if round(snr01nm_with_penalty[min_ind], 2) < pathreq.OSNR + equipment['SI']['default'].sys_margins:
-                    msg = f'\tWarning! Request {pathreq.request_id} computed path from' +\
-                          f' {pathreq.source} to {pathreq.destination} does not pass with {pathreq.tsp_mode}' +\
-                          f'\n\tcomputed SNR in 0.1nm = {round(rev_p[-1].snr_01nm[min_ind], 2)}' +\
-                          f'\n\tCD penalty = {round(rev_p[-1].penalties["chromatic_dispersion"][min_ind], 2)}' +\
-                          f'\n\tPMD penalty = {round(rev_p[-1].penalties["pmd"][min_ind], 2)}' +\
-                          f'\n\trequired osnr = {pathreq.OSNR}' +\
-                          f'\n\tsystem margin = {equipment["SI"]["default"].sys_margins}'
-                    print(msg)
+                    msg = f'\tWarning! Request {pathreq.request_id} computed path from' \
+                          + f' {pathreq.destination} to {pathreq.source} does not pass with {pathreq.tsp_mode}' \
+                          + f'\n\tcomputed SNR in 0.1nm = {round(rev_p[-1].snr_01nm[min_ind], 2)}'
+                    msg = _penalty_msg(rev_p, msg, min_ind) \
+                        + f'\n\trequired osnr = {pathreq.OSNR}' \
+                        + f'\n\tsystem margin = {equipment["SI"]["default"].sys_margins}'
                     LOGGER.warning(msg)
                     # TODO selection of mode should also be on reversed direction !!
                     if not hasattr(pathreq, 'blocking_reason'):
@@ -1202,9 +1177,8 @@ def compute_path_with_disjunction(network, equipment, pathreqlist, pathlist):
             else:
                 propagated_reversed_path = []
         else:
-            msg = 'Total path is empty. No propagation'
-            print(msg)
-            LOGGER.info(msg)
+            msg = f'Request {pathreq.request_id}: Total path is empty. No propagation'
+            LOGGER.warning(msg)
             reversed_path = []
             propagated_reversed_path = []
 
@@ -1212,12 +1186,12 @@ def compute_path_with_disjunction(network, equipment, pathreqlist, pathlist):
         reversed_path_res_list.append(reversed_path)
         propagated_reversed_path_res_list.append(propagated_reversed_path)
         # print to have a nice output
-        print('')
     return path_res_list, reversed_path_res_list, propagated_reversed_path_res_list
 
 
 def compute_spectrum_slot_vs_bandwidth(bandwidth, spacing, bit_rate, slot_width=0.0125e12):
-    """ Compute the number of required wavelengths and the M value (number of consumed slots)
+    """Compute the number of required wavelengths and the M value (number of consumed slots)
+
     Each wavelength consumes one `spacing`, and the result is rounded up to consume a natural number of slots.
 
     >>> compute_spectrum_slot_vs_bandwidth(400e9, 50e9, 200e9)
@@ -1226,3 +1200,19 @@ def compute_spectrum_slot_vs_bandwidth(bandwidth, spacing, bit_rate, slot_width=
     number_of_wavelengths = ceil(bandwidth / bit_rate)
     total_number_of_slots = ceil(spacing / slot_width) * number_of_wavelengths
     return number_of_wavelengths, total_number_of_slots
+
+
+def _penalty_msg(total_path, msg, min_ind):
+    """formatting helper for reporting unfeasible paths
+
+    The penalty info are optional, so this checks that penalty exists before creating a message."""
+    penalty_dict = {
+        'pdl': 'PDL',
+        'chromatic_dispersion': 'CD',
+        'pmd': 'PMD'}
+    for key, pretty in penalty_dict.items():
+        if key in total_path[-1].penalties:
+            msg += f'\n\t{pretty} penalty = {round(total_path[-1].penalties[key][min_ind], 2)}'
+        else:
+            msg += f'\n\t{pretty} penalty not evaluated'
+    return msg

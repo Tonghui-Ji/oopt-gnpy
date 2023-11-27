@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal, assert_raises
 from numpy import array
+from copy import deepcopy
 
 from gnpy.core.utils import lin2db, automatic_nch, dbm2watt, power_dbm_to_psd_mw_ghz, watt2dbm, psd2powerdbm
 from gnpy.core.network import build_network
@@ -20,8 +21,9 @@ from gnpy.core.info import create_input_spectral_information, Pref, create_arbit
     ReferenceCarrier
 from gnpy.core.equipment import trx_mode_params
 from gnpy.core.exceptions import ConfigurationError
-from gnpy.tools.json_io import network_from_json, load_equipment, load_network, _spectrum_from_json, load_json
-from gnpy.topology.request import PathRequest, compute_constrained_path, propagate
+from gnpy.tools.json_io import network_from_json, load_equipment, load_network, _spectrum_from_json, load_json, \
+    Transceiver, requests_from_json
+from gnpy.topology.request import PathRequest, compute_constrained_path, propagate, propagate_and_optimize_mode
 
 
 TEST_DIR = Path(__file__).parent
@@ -299,8 +301,7 @@ def test_2low_input_power(target_out, delta_pdb_per_channel, correction):
 
 
 def net_setup(equipment):
-    """ common setup for tests: builds network, equipment and oms only once
-    """
+    """common setup for tests: builds network, equipment and oms only once"""
     network = load_network(NETWORK_FILENAME, equipment)
     spectrum = equipment['SI']['default']
     p_db = spectrum.power_dbm
@@ -310,8 +311,7 @@ def net_setup(equipment):
 
 
 def create_voyager_req(equipment, source, dest, bidir, nodes_list, loose_list, mode, spacing, power_dbm):
-    """ create the usual request list according to parameters
-    """
+    """create the usual request list according to parameters"""
     params = {'request_id': 'test_request',
               'source': source,
               'bidir': bidir,
@@ -336,8 +336,7 @@ def create_voyager_req(equipment, source, dest, bidir, nodes_list, loose_list, m
 @pytest.mark.parametrize('power_dbm', [0, 1, -2, None])
 @pytest.mark.parametrize('mode, slot_width', (['mode 1', 50e9], ['mode 2', 75e9]))
 def test_initial_spectrum(mode, slot_width, power_dbm):
-    """ checks that propagation using the user defined spectrum identical to SI, gives same result as SI
-    """
+    """checks that propagation using the user defined spectrum identical to SI, gives same result as SI"""
     # first propagate without any req.initial_spectrum attribute
     equipment = load_equipment(EQPT_FILENAME)
     req = create_voyager_req(equipment, 'trx Brest_KLA', 'trx Vannes_KBE', False, ['trx Vannes_KBE'], ['STRICT'],
@@ -373,7 +372,7 @@ def test_initial_spectrum(mode, slot_width, power_dbm):
 
 
 def test_initial_spectrum_not_identical():
-    """ checks that user defined spectrum overrides spectrum defined in SI
+    """checks that user defined spectrum overrides spectrum defined in SI
     """
     # first propagate without any req.initial_spectrum attribute
     equipment = load_equipment(EQPT_FILENAME)
@@ -408,7 +407,7 @@ def test_initial_spectrum_not_identical():
     ('target_psd_out_mWperGHz', power_dbm_to_psd_mw_ghz(-20, 32e9))])
 @pytest.mark.parametrize('power_dbm', [0, 2, -0.5])
 def test_target_psd_or_psw(power_dbm, equalization, target_value):
-    """ checks that if target_out_mWperSlotWidth or target_psd_out_mWperGHz is defined, it is used as equalization
+    """checks that if target_out_mWperSlotWidth or target_psd_out_mWperGHz is defined, it is used as equalization
     and it gives same result if computed target is the same
     """
     equipment = load_equipment(EQPT_FILENAME)
@@ -438,8 +437,7 @@ def test_target_psd_or_psw(power_dbm, equalization, target_value):
 
 
 def ref_network():
-    """ Create a network instance with a instance of propagated path
-    """
+    """Create a network instance with a instance of propagated path"""
     equipment = load_equipment(EQPT_FILENAME)
     network = net_setup(equipment)
     req0 = create_voyager_req(equipment, 'trx Brest_KLA', 'trx Vannes_KBE', False, ['trx Vannes_KBE'], ['STRICT'],
@@ -451,7 +449,8 @@ def ref_network():
 
 @pytest.mark.parametrize('deltap', [0, +1.2, -0.5])
 def test_target_psd_out_mwperghz_deltap(deltap):
-    """ checks that if target_psd_out_mWperGHz is defined, delta_p of amps is correctly updated
+    """checks that if target_psd_out_mWperGHz is defined, delta_p of amps is correctly updated
+
     Power over 1.2dBm saturate amp with this test: TODO add a test on this saturation
     """
     equipment = load_equipment(EQPT_FILENAME)
@@ -586,3 +585,253 @@ def test_power_option(req_power):
     assert_array_equal(infos_expected.pmd, infos_actual.pmd)
     assert_array_equal(infos_expected.channel_number, infos_actual.channel_number)
     assert_array_equal(infos_expected.number_of_channels, infos_actual.number_of_channels)
+
+
+def transceiver(slot_width, value):
+    return {
+        "type_variety": "test_offset",
+        "frequency": {
+            "min": 191.3e12,
+            "max": 196.1e12
+        },
+        "mode": [
+            {
+                "format": "mode 1",
+                "baud_rate": 64e9,
+                "OSNR": 18,
+                "bit_rate": 100e9,
+                "roll_off": 0.15,
+                "tx_osnr": 40,
+                "min_spacing": 75e9,
+                "cost": 1
+            },
+            {
+                "format": "mode 3",
+                "baud_rate": 64e9,
+                "OSNR": 18,
+                "bit_rate": 100e9,
+                "roll_off": 0.15,
+                "tx_osnr": 40,
+                "min_spacing": slot_width,
+                "equalization_offset_db": value,
+                "cost": 1
+            }
+        ]
+    }
+
+
+def some_requests():
+    route = {
+        "route-object-include-exclude": [
+            {
+                "explicit-route-usage": "route-include-ero",
+                "index": 0,
+                "num-unnum-hop": {
+                    "node-id": "trx Brest_KLA",
+                    "link-tp-id": "link-tp-id is not used",
+                    "hop-type": "STRICT"
+                }
+            },
+            {
+                "explicit-route-usage": "route-include-ero",
+                "index": 1,
+                "num-unnum-hop": {
+                    "node-id": "trx Vannes_KBE",
+                    "link-tp-id": "link-tp-id is not used",
+                    "hop-type": "STRICT"
+                }
+            }
+        ]
+    }
+    return {
+        "path-request": [{
+            "request-id": "2",
+            "source": "trx Brest_KLA",
+            "destination": "trx Vannes_KBE",
+            "src-tp-id": "trx Brest_KLA",
+            "dst-tp-id": "trx Vannes_KBE",
+            "bidirectional": False,
+            "path-constraints": {
+                "te-bandwidth": {
+                    "technology": "flexi-grid",
+                    "trx_type": "test_offset",
+                    "trx_mode": "mode 1",
+                    "spacing": 75000000000.0,
+                    "path_bandwidth": 100000000000.0
+                }
+            },
+            "explicit-route-objects": route
+        }, {
+            "request-id": "3",
+            "source": "trx Brest_KLA",
+            "destination": "trx Vannes_KBE",
+            "src-tp-id": "trx Brest_KLA",
+            "dst-tp-id": "trx Vannes_KBE",
+            "bidirectional": False,
+            "path-constraints": {
+                "te-bandwidth": {
+                    "technology": "flexi-grid",
+                    "trx_type": "test_offset",
+                    "trx_mode": "mode 3",
+                    "spacing": 87500000000.0,
+                    "path_bandwidth": 100000000000.0
+                }
+            },
+            "explicit-route-objects": route
+        }, {
+            "request-id": "4",
+            "source": "trx Brest_KLA",
+            "destination": "trx Vannes_KBE",
+            "src-tp-id": "trx Brest_KLA",
+            "dst-tp-id": "trx Vannes_KBE",
+            "bidirectional": False,
+            "path-constraints": {
+                "te-bandwidth": {
+                    "technology": "flexi-grid",
+                    "trx_type": "test_offset",
+                    "trx_mode": "mode 1",
+                    "spacing": 87500000000.0,
+                    "path_bandwidth": 100000000000.0
+                }
+            },
+            "explicit-route-objects": route
+        }]
+    }
+
+
+@pytest.mark.parametrize('slot_width, value', [(75e9, lin2db(75 / 87.5)),
+                                               (87.5e9, lin2db(75 / 87.5))])
+def test_power_offset_trx_equalization_psw(slot_width, value):
+    """Check that the equalization with the offset is giving the same result as with reference slot_width
+    Check that larger slot width but no offset takes larger slot width for equalization
+    """
+    equipment = load_equipment(EQPT_FILENAME)
+    trx = transceiver(slot_width, value)
+    equipment['Transceiver'][trx['type_variety']] = Transceiver(**trx)
+    setattr(equipment['Roadm']['default'], 'target_pch_out_db', None)
+    setattr(equipment['Roadm']['default'], 'target_out_mWperSlotWidth', power_dbm_to_psd_mw_ghz(-20, 50e9))
+    network = net_setup(equipment)
+    json_data = some_requests()
+    ref_request, request, other = requests_from_json(json_data, equipment)
+    # ref_request (_expected) has no offset, equalization on 75GH basis
+    path_expected = compute_constrained_path(network, ref_request)
+    _ = propagate(path_expected, ref_request, equipment)
+    roadm1_expected = deepcopy(path_expected[1])
+    # request has an offset either defined in power and a larger slot width.
+    # The defined offset is "equalize as if it was a 75 GHz channel" although slot_width is 87.5GHz
+    path = compute_constrained_path(network, request)
+    _ = propagate(path, request, equipment)
+    roadm1 = deepcopy(path[1])
+    # the other request has a larger slot width (spacing) but no offset. so equalization uses this slot width
+    path_other = compute_constrained_path(network, other)
+    _ = propagate(path, other, equipment)
+    roadm1_other = path_other[1]
+    # check the first frequency since all cariers have the same equalization
+    # Check that the power is equalized as if it was for a 75GHz channel (mode 1) instead of a 87.5GHz
+    assert roadm1.pch_out_dbm[0] == roadm1_expected.pch_out_dbm[0]
+    # Check that equalization instead uses 87.5GHz basis
+    assert roadm1_other.pch_out_dbm[0] == roadm1_expected.pch_out_dbm[0] + lin2db(87.5 / 75)
+
+
+@pytest.mark.parametrize('slot_width, value', [(75e9, lin2db(75 / 50)),
+                                               (87.5e9, lin2db(75 / 50))])
+def test_power_offset_trx_equalization_p(slot_width, value):
+    """Check that the constant power equalization with the offset is applied
+    """
+    equipment = load_equipment(EQPT_FILENAME)
+    trx = transceiver(slot_width, value)
+    equipment['Transceiver'][trx['type_variety']] = Transceiver(**trx)
+    setattr(equipment['Roadm']['default'], 'target_pch_out_db', -20)
+    network = net_setup(equipment)
+    json_data = some_requests()
+    ref_request, request, _ = requests_from_json(json_data, equipment)
+    path_expected = compute_constrained_path(network, ref_request)
+    _ = propagate(path_expected, ref_request, equipment)
+    roadm1_expected = deepcopy(path_expected[1])
+    path = compute_constrained_path(network, request)
+    _ = propagate(path, request, equipment)
+    roadm1 = deepcopy(path[1])
+    assert roadm1.pch_out_dbm[0] == roadm1_expected.pch_out_dbm[0] + lin2db(75 / 50)
+
+
+@pytest.mark.parametrize('equalization, target_value',
+    [('target_pch_out_db', -20),
+     ('target_psd_out_mWperGHz', power_dbm_to_psd_mw_ghz(-20, 64e9)),
+     ('target_out_mWperSlotWidth', power_dbm_to_psd_mw_ghz(-20, 50e9))])
+@pytest.mark.parametrize('slot_width, value, expected_mode', [(75e9, 3.0, 'mode 3')])
+def test_power_offset_automatic_mode_selection(slot_width, value, equalization,
+                                               target_value, expected_mode):
+    """Check that the same result is obtained if the mode is user defined or if it is
+    automatically selected
+    """
+    equipment = load_equipment(EQPT_FILENAME)
+    trx = transceiver(slot_width, value)
+    equipment['Transceiver'][trx['type_variety']] = Transceiver(**trx)
+    setattr(equipment['Roadm']['default'], 'target_pch_out_db', None)
+    setattr(equipment['Roadm']['default'], equalization, target_value)
+    network = net_setup(equipment)
+    route = {
+        "route-object-include-exclude": [
+            {
+                "explicit-route-usage": "route-include-ero",
+                "index": 0,
+                "num-unnum-hop": {
+                    "node-id": "trx Brest_KLA",
+                    "link-tp-id": "link-tp-id is not used",
+                    "hop-type": "STRICT"
+                }
+            },
+            {
+                "explicit-route-usage": "route-include-ero",
+                "index": 1,
+                "num-unnum-hop": {
+                    "node-id": "trx Vannes_KBE",
+                    "link-tp-id": "link-tp-id is not used",
+                    "hop-type": "STRICT"
+                }
+            }
+        ]
+    }
+    json_data = {
+        "path-request": [{
+            "request-id": "imposed_mode",
+            "source": "trx Brest_KLA",
+            "destination": "trx Vannes_KBE",
+            "src-tp-id": "trx Brest_KLA",
+            "dst-tp-id": "trx Vannes_KBE",
+            "bidirectional": False,
+            "path-constraints": {
+                "te-bandwidth": {
+                    "technology": "flexi-grid",
+                    "trx_type": "test_offset",
+                    "trx_mode": "mode 3",
+                    "spacing": 75000000000.0,
+                    "path_bandwidth": 100000000000.0
+                }
+            },
+            "explicit-route-objects": route
+        }, {
+            "request-id": "free_mode",
+            "source": "trx Brest_KLA",
+            "destination": "trx Vannes_KBE",
+            "src-tp-id": "trx Brest_KLA",
+            "dst-tp-id": "trx Vannes_KBE",
+            "bidirectional": False,
+            "path-constraints": {
+                "te-bandwidth": {
+                    "technology": "flexi-grid",
+                    "trx_type": "test_offset",
+                    "spacing": 75000000000.0,
+                    "path_bandwidth": 100000000000.0
+                }
+            },
+            "explicit-route-objects": route
+        }]}
+    imposed_req, free_req, = requests_from_json(json_data, equipment)
+    assert free_req.tsp_mode is None
+    path_expected = compute_constrained_path(network, imposed_req)
+    _ = propagate(path_expected, imposed_req, equipment)
+    path = compute_constrained_path(network, free_req)
+    _, mode = propagate_and_optimize_mode(path, free_req, equipment)
+    assert mode['format'] == expected_mode
+    assert_allclose(path_expected[-1].snr_01nm, path[-1].snr_01nm, rtol=1e-5)
