@@ -400,5 +400,6 @@ class ReferenceCarrier:
 
     Other attributes (like slot_width or roll-off) may be added there for future equalization purpose.
     """
+    ## Tonghui 2023.11.28: 这个类定义了一个参考波长，方便计算损耗？
     baud_rate: float
     slot_width: float
