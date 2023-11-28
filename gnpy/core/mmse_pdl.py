@@ -1,6 +1,7 @@
 import numpy as np
-from support.utils import lin2dB,dB2lin,parameters
+from gnpy.core.utils import lin2db,db2lin
 from scipy.constants import pi,h,c
+from gnpy.core.parameters import Parameters
 
 def h_pdl(pdl_dB:float=0,alpha:float=0,beta:float=0,type:str='active')->np.array:
     """
@@ -69,14 +70,14 @@ def prod_mat(mat_list:list)->np.array:
 
     return mat_prod
 
-def pdl_pen(params:parameters)->float:
+def pdl_pen(params:Parameters)->float:
     """
     Calculate snr pen induced by pdl based on mmse criterion.
 
     Parameters
     ----------
-    params : parameters object
-        Simulation parameters.
+    params : Parameters object
+        Simulation Parameters.
     Returns
     -------
     snr_pen : real scalar
@@ -98,18 +99,18 @@ def pdl_pen(params:parameters)->float:
     voa_params_list = params.voa_params_list
 
     sig_power_dB = params.sig_power_dB
-    sig_power_lin = dB2lin(sig_power_dB)    
+    sig_power_lin = db2lin(sig_power_dB)    
 
     n_power_lin = np.zeros(len(link_config)+2)
 
-    n_power_lin[0] = sig_power_lin / dB2lin(snr_trx_dB) / 2
+    n_power_lin[0] = sig_power_lin / db2lin(snr_trx_dB) / 2
     h_pdl_list = []
 
 
     for i,comp in enumerate(link_config):
         if comp.lower() == 'wss':
             wss_params = wss_params_list.pop()
-            loss_lin = dB2lin(getattr(wss_params,"loss_dB",0))
+            loss_lin = db2lin(getattr(wss_params,"loss_dB",0))
             pdl_dB = getattr(wss_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin
@@ -117,8 +118,8 @@ def pdl_pen(params:parameters)->float:
             pass
         elif comp.lower() == 'oa':
             oa_params = oa_params_list.pop()
-            gain_lin = dB2lin(getattr(oa_params,"gain_dB",16))
-            nf_lin = dB2lin(getattr(oa_params,"nf_dB",4.5))
+            gain_lin = db2lin(getattr(oa_params,"gain_dB",16))
+            nf_lin = db2lin(getattr(oa_params,"nf_dB",4.5))
             pdl_dB = getattr(oa_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin * gain_lin
             n_power_lin = n_power_lin * gain_lin
@@ -127,7 +128,7 @@ def pdl_pen(params:parameters)->float:
             pass
         elif comp.lower() == 'fiber':
             fiber_params = fiber_params_list.pop()
-            loss_lin = dB2lin(getattr(fiber_params,"loss_dB",0))
+            loss_lin = db2lin(getattr(fiber_params,"loss_dB",0))
             pdl_dB = getattr(fiber_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin     
@@ -135,7 +136,7 @@ def pdl_pen(params:parameters)->float:
             pass
         elif comp.lower() =='fiu':
             fiu_params = fiu_params_list.pop()
-            loss_lin = dB2lin(getattr(fiu_params,"loss_dB",0))
+            loss_lin = db2lin(getattr(fiu_params,"loss_dB",0))
             pdl_dB = getattr(fiu_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin  
@@ -143,14 +144,14 @@ def pdl_pen(params:parameters)->float:
             pass
         elif comp.lower() == 'voa':
             voa_params = voa_params_list.pop()
-            loss_lin = dB2lin(getattr(voa_params,"loss_dB",0))
+            loss_lin = db2lin(getattr(voa_params,"loss_dB",0))
             pdl_dB = getattr(voa_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin  
             h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=0,beta=0)) 
         else:
             raise TypeError('Unsupported component type')
-    n_power_lin[-1] = sig_power_lin / dB2lin(snr_trx_dB) / 2    
+    n_power_lin[-1] = sig_power_lin / db2lin(snr_trx_dB) / 2    
     h_pdl_list.append(h_pdl(pdl_dB=0,alpha=0,beta=0)) # 和收端ASE匹配，便于计算
 
     H_ch = prod_mat(h_pdl_list)
@@ -166,20 +167,20 @@ def pdl_pen(params:parameters)->float:
     H_eq = W*H_ch
 
     MMSE = H_eq*H_eq.H
-    snr_esti_dB_x = lin2dB(sig_power_lin*MMSE[1,1]/sum(n_power_lin))
-    snr_esti_dB_y = lin2dB(sig_power_lin*MMSE[0,0]/sum(n_power_lin))
+    snr_esti_dB_x = lin2db(sig_power_lin*MMSE[1,1]/sum(n_power_lin))
+    snr_esti_dB_y = lin2db(sig_power_lin*MMSE[0,0]/sum(n_power_lin))
 
     return snr_esti_dB_x,snr_esti_dB_y 
 
 
 if __name__ == '__main__':
-    params = parameters()
+    params = Parameters()
     params.snr_trx_dB = 17
     params.sig_power_dB = 3
     params.Rs = 92e9
     params.Fc = 193e12
 
-    link_params = parameters()
+    link_params = Parameters()
     link_config = ["wss","wss","oa","voa","fiber","fiu","oa"]
     link_params.link_config = link_config
     link_params.num_oa = link_config.count("oa")
@@ -195,7 +196,7 @@ if __name__ == '__main__':
     fiber_params_list = []
     voa_params_list = []
     for i in range(link_params.num_wss):
-        wss_params = parameters()
+        wss_params = Parameters()
         wss_params.loss_dB = 8
         wss_params.type = 'lcos_model'
         wss_params.bw_otf = 10e9
@@ -204,25 +205,25 @@ if __name__ == '__main__':
         wss_params_list.append(wss_params)
 
     for i in range(link_params.num_oa):
-        oa_params = parameters()
+        oa_params = Parameters()
         oa_params.nf_dB = 4.5
         oa_params.gain_dB = 15
         oa_params.pdl_dB = 0.1
         oa_params_list.append(oa_params)
 
     for i in range(link_params.num_fiber):
-        fiber_params = parameters()
+        fiber_params = Parameters()
         fiber_params.loss_dB = 16
         fiber_params_list.append(fiber_params)
 
     for i in range(link_params.num_fiu):
-        fiu_params = parameters()
+        fiu_params = Parameters()
         fiu_params.loss_dB = 0.7
         fiu_params.pdl_dB = 0.1
         fiu_params_list.append(fiu_params)
 
     for i in range(link_params.num_voa):
-        voa_params = parameters()
+        voa_params = Parameters()
         voa_params.loss_dB = 1
         voa_params.pdl_dB = 0.1
         voa_params_list.append(voa_params)

@@ -7,7 +7,7 @@ gnpy.core.utils
 
 This module contains utility functions that are used with gnpy.
 """
-
+import numpy as np
 from csv import writer
 from numpy import pi, cos, sqrt, log10, linspace, zeros, shape, where, logical_and, mean
 from scipy import constants
@@ -452,3 +452,87 @@ def restore_order(elements, order):
     [3, 2, 7]
     """
     return [elements[i[0]] for i in sorted(enumerate(order), key=lambda x:x[1]) if elements[i[0]] is not None]
+
+def generate_random_numbers(distribution, params, size):  
+    def randomvariate(params, size):
+        """  
+        Rejection method for random number generation  
+        ===============================================  
+        Uses the rejection method for generating random numbers derived from an arbitrary   
+        probability distribution. For reference, see Bevington's book, page 84. Based on  
+        rejection*.py.  
+        
+        Usage:  
+        >>> randomvariate(P,N,xmin,xmax)  
+        where  
+        P : probability distribution function from which you want to generate random numbers  
+        N : desired number of random values  
+        xmin,xmax : range of random numbers desired  
+            
+        Returns:   
+        the sequence (ran,ntrials) where  
+        ran : array of shape N with the random variates that follow the input P  
+        ntrials : number of trials the code needed to achieve N  
+        
+        Here is the algorithm:  
+        - generate x' in the desired range  
+        - generate y' between Pmin and Pmax (Pmax is the maximal value of your pdf)  
+        - if y'<P(x') accept x', otherwise reject  
+        - repeat until desired number is achieved  
+        
+        """  
+        # Calculates the minimal and maximum values of the PDF in the desired interval. 
+        # The rejection method needs these values in order to work properly.  
+        pdf = params[0]
+        xmin = params[1]
+        xmax = params[2]
+
+        if isinstance(size,tuple):
+            N = 1
+            for tmp_N in size:
+                N = tmp_N * N
+        elif isinstance(size,int):
+            N = size
+
+        x = np.linspace(xmin, xmax, 1000)  
+        y = pdf(x)  
+        pmin = 0.  
+        pmax = y.max()  
+        
+        # Counters  
+        naccept = 0  
+        ntrial = 0  
+        
+        # Keeps generating numbers until we achieve the desired n  
+        ran = [] # output list of random numbers  
+        while naccept < N:  
+            x = np.random.uniform(xmin, xmax) # x'  
+            y = np.random.uniform(pmin, pmax) # y'  
+        
+            if y < pdf(x):  
+                ran.append(x)  
+                naccept = naccept+1  
+                ntrial = ntrial+1  
+            
+        ran = np.asarray(ran)  
+
+        if isinstance(size,tuple):
+            ran.reshape(size)
+     
+        return ran  
+       
+    if distribution == 'uniform':
+        return np.random.uniform(*params, size)
+    elif distribution == 'normal':
+        return np.random.normal(*params, size)
+    elif distribution == 'exponential':
+        return np.random.exponential(*params, size)
+    elif distribution == 'pdf':
+        return randomvariate(params, size)
+    else:
+        raise ValueError("不支持的分布类型")
+    
+
+def maxwell_distribution(mean_value,x):
+    a = mean_value/(2*np.sqrt(2/np.pi))
+    return np.sqrt(2/np.pi)*x**2/(a**3)*np.exp(-(x**2)/(2*a**2))

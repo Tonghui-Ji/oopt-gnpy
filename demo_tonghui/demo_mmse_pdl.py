@@ -1,127 +1,138 @@
 from gnpy.core.parameters import Parameters
 from gnpy.core.mmse_pdl import pdl_pen, h_pdl, prod_mat
-from gnpy.core.utils import lin2db,db2lin
+from gnpy.core.utils import lin2db,db2lin,generate_random_numbers
 import numpy as np
 import matplotlib.pyplot as plt
+from support.gobal_control import GlobalControl
+from gnpy.tools.json_io import load_equipment, load_network
+from gnpy.core.network import span_loss,build_network
+from gnpy.core.elements import Transceiver, Fiber, Edfa, Roadm
+from gnpy.core.info import create_input_spectral_information, ReferenceCarrier
+import networkx as nx
+from networkx import dijkstra_path
 
-def generate_random_numbers(distribution, params, size):  
-    def randomvariate(params, size):
-        """  
-        Rejection method for random number generation  
-        ===============================================  
-        Uses the rejection method for generating random numbers derived from an arbitrary   
-        probability distribution. For reference, see Bevington's book, page 84. Based on  
-        rejection*.py.  
+gc = GlobalControl()
+data_path = gc.gnpy_path/ 'data'
+EQPT_FILENAME = data_path / 'eqpt_config.json'
+NETWORK_FILENAME = data_path / 'LinkforSnrEstimationTest.json'
+con_in = 1
+con_out = 0
+input_power = 0
+dest = 'trx F'
+baud_rate = 32e9
+grid_hz = 50e9
+
+equipment = load_equipment(EQPT_FILENAME)
+network = load_network(NETWORK_FILENAME, equipment)
+nx.draw(network, with_labels=True)
+
+build_network(network, equipment, 0, 20)
+
+# parametrize the network elements with the con losses and adapt gain
+# (assumes all spans are identical)
+for e in network.nodes():
+    if isinstance(e, Fiber):
+        loss = e.params.loss_coef * e.params.length
+        e.params.con_in = con_in
+        e.params.con_out = con_out
+    if isinstance(e, Edfa):
+        e.operational.gain_target = loss + con_in + con_out
+
+transceivers = {n.uid: n for n in network.nodes() if isinstance(n, Transceiver)}
+
+p = input_power
+p = db2lin(p) * 1e-3
+si = create_input_spectral_information(f_min=191.3e12, f_max=191.3e12 + 79 * grid_hz, roll_off=0.15,
+                                        baud_rate=baud_rate, power=p, spacing=grid_hz, tx_osnr=None,
+                                        ref_carrier=ReferenceCarrier(baud_rate=baud_rate, slot_width=grid_hz))
+source = next(transceivers[uid] for uid in transceivers if uid == 'trx A')
+sink = next(transceivers[uid] for uid in transceivers if uid == dest)
+path = dijkstra_path(network, source, sink)
+
+params = Parameters()
+params.snr_trx_dB = 17
+params.sig_power_dB = 3
+params.Rs = baud_rate
+# FIXME: 根据si.frequency选择对应的channel
+params.Fc = 193e12
+
+link_params = Parameters()
+link_config = []
+wss_params_list = []
+oa_params_list = []
+fiu_params_list = []
+fiber_params_list = []
+voa_params_list = []
+for el in path:
+    if isinstance(el,Roadm):
+        link_config.append("wss")
+    elif isinstance(el,Edfa):
+        link_config.append("oa")
+        oa_params = Parameters()
+        oa_params.nf_dB = 4.5
+        oa_params.gain_dB = 15
+        oa_params.pdl_dB = 0.1
+        oa_params_list.append(oa_params)
+    elif isinstance(el,Fiber):
+        link_config.append("Fiber")
+
         
-        Usage:  
-        >>> randomvariate(P,N,xmin,xmax)  
-        where  
-        P : probability distribution function from which you want to generate random numbers  
-        N : desired number of random values  
-        xmin,xmax : range of random numbers desired  
-            
-        Returns:   
-        the sequence (ran,ntrials) where  
-        ran : array of shape N with the random variates that follow the input P  
-        ntrials : number of trials the code needed to achieve N  
-        
-        Here is the algorithm:  
-        - generate x' in the desired range  
-        - generate y' between Pmin and Pmax (Pmax is the maximal value of your pdf)  
-        - if y'<P(x') accept x', otherwise reject  
-        - repeat until desired number is achieved  
-        
-        """  
-        # Calculates the minimal and maximum values of the PDF in the desired interval. 
-        # The rejection method needs these values in order to work properly.  
-        pdf = params[0]
-        xmin = params[1]
-        xmax = params[2]
-
-        if isinstance(size,tuple):
-            N = 1
-            for tmp_N in size:
-                N = tmp_N * N
-        elif isinstance(size,int):
-            N = size
-
-        x = np.linspace(xmin, xmax, 1000)  
-        y = pdf(x)  
-        pmin = 0.  
-        pmax = y.max()  
-        
-        # Counters  
-        naccept = 0  
-        ntrial = 0  
-        
-        # Keeps generating numbers until we achieve the desired n  
-        ran = [] # output list of random numbers  
-        while naccept < N:  
-            x = np.random.uniform(xmin, xmax) # x'  
-            y = np.random.uniform(pmin, pmax) # y'  
-        
-            if y < pdf(x):  
-                ran.append(x)  
-                naccept = naccept+1  
-                ntrial = ntrial+1  
-            
-        ran = np.asarray(ran)  
-
-        if isinstance(size,tuple):
-            ran.reshape(size)
-     
-        return ran  
-       
-    if distribution == 'uniform':
-        return np.random.uniform(*params, size)
-    elif distribution == 'normal':
-        return np.random.normal(*params, size)
-    elif distribution == 'exponential':
-        return np.random.exponential(*params, size)
-    elif distribution == 'pdf':
-        return randomvariate(params, size)
-    else:
-        raise ValueError("不支持的分布类型")
-     
-def maxwell_distribution(mean_value,x):
-    a = mean_value/(2*np.sqrt(2/np.pi))
-    return np.sqrt(2/np.pi)*x**2/(a**3)*np.exp(-(x**2)/(2*a**2))
-
-N_sim = 10000
-N_pdl = 10
-pdl_tot_dB = np.zeros(N_sim)
-for i in range(N_sim):
-    pdl = generate_random_numbers(distribution='normal',params=(0.5,0.5),size=N_pdl)
-    # alpha = generate_random_numbers(distribution='normal',params=(0,2*np.pi),size=N_pdl)
-    alpha = generate_random_numbers(distribution='pdf',params=(lambda x: np.sin(2*x), 0 , 0.5*np.pi),size=N_pdl)
-    beta = generate_random_numbers(distribution='normal',params=(0,2*np.pi),size=N_pdl)
-    h_pdl_list = []
-    for j in range(N_pdl):
-        h_pdl_list.append(h_pdl(pdl_dB=pdl[j],alpha=alpha[j],beta=beta[j]))
-
-    h_pdl_tot = prod_mat(h_pdl_list)
-    U, S, Vt = np.linalg.svd(h_pdl_tot)
-    pdl_tot_dB[i] = 2*lin2db(S[0]/S[1])
-
-mean_value = np.mean(pdl_tot_dB)
-x = np.arange(0,np.max(pdl_tot_dB),0.1)
-y = maxwell_distribution(mean_value,x)
 
 
-hist, bin_edges = np.histogram(pdl_tot_dB, bins=30, density=True)
-plt.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), edgecolor="k", alpha=0.7)
-plt.plot(x,y)
-plt.xlabel('PDL')
-plt.ylabel('Frequency')
-plt.title('Histogram')
-plt.show()
 
-# x = np.arange(0,np.pi/2,0.01*np.pi)
-# data = generate_random_numbers(distribution='pdf',params=(lambda x: np.sin(2*x), 0 , 0.5*np.pi),size=10000)
-# hist, bin_edges = np.histogram(data, bins=30, density=True)
-# plt.plot(x,np.sin(2*x))
-# plt.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), edgecolor="k", alpha=0.7)
-# plt.xlabel('PDL')
-# plt.ylabel('Frequency')
-# plt.title('Histogram')
-# plt.show()
+link_config = ["wss","wss","oa","voa","fiber","fiu","oa"]
+link_params.link_config = link_config
+link_params.num_oa = link_config.count("oa")
+link_params.num_wss = link_config.count("wss")
+link_params.num_fiber = link_config.count("fiber")
+link_params.num_fiu = link_config.count("fiu")
+link_params.num_voa = link_config.count("voa")
+params.link_params = link_params
+
+wss_params_list = []
+oa_params_list = []
+fiu_params_list = []
+fiber_params_list = []
+voa_params_list = []
+for i in range(link_params.num_wss):
+    wss_params = Parameters()
+    wss_params.loss_dB = 8
+    wss_params.type = 'lcos_model'
+    wss_params.bw_otf = 10e9
+    wss_params.bw = 100e9
+    wss_params.pdl_dB = 0.55
+    wss_params_list.append(wss_params)
+
+for i in range(link_params.num_oa):
+    oa_params = Parameters()
+    oa_params.nf_dB = 4.5
+    oa_params.gain_dB = 15
+    oa_params.pdl_dB = 0.1
+    oa_params_list.append(oa_params)
+
+for i in range(link_params.num_fiber):
+    fiber_params = Parameters()
+    fiber_params.loss_dB = 16
+    fiber_params_list.append(fiber_params)
+
+for i in range(link_params.num_fiu):
+    fiu_params = Parameters()
+    fiu_params.loss_dB = 0.7
+    fiu_params.pdl_dB = 0.1
+    fiu_params_list.append(fiu_params)
+
+for i in range(link_params.num_voa):
+    voa_params = Parameters()
+    voa_params.loss_dB = 1
+    voa_params.pdl_dB = 0.1
+    voa_params_list.append(voa_params)
+
+params.oa_params_list = oa_params_list[::-1]
+params.wss_params_list = wss_params_list[::-1]
+params.fiu_params_list = fiu_params_list[::-1]
+params.fiber_params_list = fiber_params_list[::-1]
+params.voa_params_list = voa_params_list[::-1]
+
+snr_esti_dB_x,snr_esti_dB_y = pdl_pen(params)
+
+pass
