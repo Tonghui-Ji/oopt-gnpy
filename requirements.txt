@@ -9,3 +9,4 @@ pbr>=6.0.0,<7
 scipy>=1.10.1,<2
 # xlrd 2.x removed support for .xlsx, it's only .xls now
 xlrd>=1.2.0,<2
+pytest

@@ -1,5 +1,4 @@
 from pathlib import Path
-import pytest
 from numpy.testing import assert_allclose, assert_array_equal, assert_raises
 from numpy import array
 from copy import deepcopy
