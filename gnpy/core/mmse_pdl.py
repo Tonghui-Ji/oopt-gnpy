@@ -1,7 +1,8 @@
 import numpy as np
-from gnpy.core.utils import lin2db,db2lin
+from gnpy.core.utils import lin2db,db2lin,snr2ber,ber2snr
 from scipy.constants import pi,h,c
 from gnpy.core.parameters import Parameters
+from scipy.special import erfc
 
 def h_pdl(pdl_dB:float=0,alpha:float=0,beta:float=0,type:str='active')->np.array:
     """
@@ -86,19 +87,20 @@ def pdl_pen(params:Parameters)->float:
     References
     -------
     [1] Analysis of Impact of Polarization Dependent Loss in Point to Multi-Point Subsea Communication Systems.    
+    [2] QAM BER for AWGN channel: https://www.etti.unibw.de/labalive/experiment/qam/
     """
     link_config = params.link_params.link_config
     snr_trx_dB = params.snr_trx_dB
     Rs = params.Rs
     Fc = params.Fc
 
-    oa_params_list = params.oa_params_list
-    wss_params_list = params.wss_params_list
-    fiu_params_list = params.fiu_params_list
-    fiber_params_list = params.fiber_params_list
-    voa_params_list = params.voa_params_list
-    alpha_list = params.alpha_list
-    beta_list = params.beta_list
+    oa_params_list = getattr(params,"oa_params_list",None)
+    wss_params_list = getattr(params,"wss_params_list",None)
+    fiu_params_list = getattr(params,"fiu_params_list",None)
+    fiber_params_list = getattr(params,"fiber_params_list",None)
+    voa_params_list = getattr(params,"voa_params_list",None)
+    alpha_list = getattr(params,"alpha_list",None)
+    beta_list = getattr(params,"beta_list",None)
 
     sig_power_dBm = params.sig_power_dBm
     sig_power_lin = db2lin(sig_power_dBm)/1e3
@@ -112,8 +114,8 @@ def pdl_pen(params:Parameters)->float:
     for i,comp in enumerate(link_config):
         if comp.lower() == 'wss':
             wss_params = wss_params_list.pop()
-            loss_lin = db2lin(getattr(wss_params,"loss_dB",0))
-            pdl_dB = getattr(wss_params,"pdl_dB",0)
+            loss_lin = db2lin(getattr(wss_params,"loss_dB",8))
+            pdl_dB = getattr(wss_params,"pdl_dB",0.5)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin
             h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i]))
@@ -122,7 +124,7 @@ def pdl_pen(params:Parameters)->float:
             oa_params = oa_params_list.pop()
             gain_lin = db2lin(getattr(oa_params,"gain_dB",16))
             nf_lin = db2lin(getattr(oa_params,"nf_dB",4.5))
-            pdl_dB = getattr(oa_params,"pdl_dB",0)
+            pdl_dB = getattr(oa_params,"pdl_dB",0.3)
             sig_power_lin = sig_power_lin * gain_lin
             n_power_lin = n_power_lin * gain_lin
             n_power_lin[i+1] = h*Fc*Rs*(gain_lin*nf_lin-1)
@@ -130,7 +132,7 @@ def pdl_pen(params:Parameters)->float:
             pass
         elif comp.lower() == 'fiber':
             fiber_params = fiber_params_list.pop()
-            loss_lin = db2lin(getattr(fiber_params,"loss_dB",0))
+            loss_lin = db2lin(getattr(fiber_params,"loss_dB",16))
             pdl_dB = getattr(fiber_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin     
@@ -138,16 +140,16 @@ def pdl_pen(params:Parameters)->float:
             pass
         elif comp.lower() =='fiu':
             fiu_params = fiu_params_list.pop()
-            loss_lin = db2lin(getattr(fiu_params,"loss_dB",0))
-            pdl_dB = getattr(fiu_params,"pdl_dB",0)
+            loss_lin = db2lin(getattr(fiu_params,"loss_dB",1))
+            pdl_dB = getattr(fiu_params,"pdl_dB",0.1)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin  
             h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i])) 
             pass
         elif comp.lower() == 'voa':
             voa_params = voa_params_list.pop()
-            loss_lin = db2lin(getattr(voa_params,"loss_dB",0))
-            pdl_dB = getattr(voa_params,"pdl_dB",0)
+            loss_lin = db2lin(getattr(voa_params,"loss_dB",1))
+            pdl_dB = getattr(voa_params,"pdl_dB",0.1)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin  
             h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i])) 
@@ -165,14 +167,24 @@ def pdl_pen(params:Parameters)->float:
         T = np.mat(prod_mat(h_pdl_list[i:]))
         S += alpha[i]*(T*T.H)
 
-    W = np.sqrt(np.linalg.inv(S))
+    W = S.I
     H_eq = W*H_ch
 
-    MMSE = H_eq*H_eq.H
-    snr_esti_dB_x = lin2db(sig_power_lin*MMSE[1,1]/sum(n_power_lin))
-    snr_esti_dB_y = lin2db(sig_power_lin*MMSE[0,0]/sum(n_power_lin))
+    snr_ase_lin = sig_power_lin/sum(n_power_lin)
+    MMSE = np.abs((H_eq*H_eq.H + 1/snr_ase_lin*np.eye(2)).I)
+    snr_esti_dB_x = lin2db(sig_power_lin/MMSE[0,0]/sum(n_power_lin)-1)
+    snr_esti_dB_y = lin2db(sig_power_lin/MMSE[1,1]/sum(n_power_lin)-1)
 
-    return snr_esti_dB_x,snr_esti_dB_y 
+    # convert SNR to ber, calculate average ber, conver average ber to average snr
+    M = 16
+    ber_x = snr2ber(M,snr_esti_dB_x)
+    ber_y = snr2ber(M,snr_esti_dB_y)
+    snr_pdl_dB = ber2snr(M,(ber_x + ber_y) / 2)
+
+    snr_ase_dB = lin2db(sig_power_lin/sum(n_power_lin))
+    snr_pen_dB = snr_ase_dB - snr_pdl_dB
+
+    return snr_pen_dB
 
 
 if __name__ == '__main__':

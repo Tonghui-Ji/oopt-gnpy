@@ -536,3 +536,15 @@ def generate_random_numbers(distribution, params, size):
 def maxwell_distribution(mean_value,x):
     a = mean_value/(2*np.sqrt(2/np.pi))
     return np.sqrt(2/np.pi)*x**2/(a**3)*np.exp(-(x**2)/(2*a**2))
+
+
+def snr2ber(M,snr_dB):
+    from scipy.special import erfc
+    N = np.log2(M)
+    return (2/N)*(1-1/np.sqrt(M))*erfc(np.sqrt(3/2/(M-1)*db2lin(snr_dB)))
+
+def ber2snr(M,ber):
+    from scipy.special import erfcinv
+    N = np.log2(M)
+    
+    return lin2db((2*(M-1)/3)*(erfcinv(ber/(2/N)/(1-1/sqrt(M)))**2))

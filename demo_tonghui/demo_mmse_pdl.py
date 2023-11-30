@@ -109,28 +109,16 @@ if __name__ == '__main__':
     setattr(equipment['Roadm']['default'], equalization, target_psd)
     network = net_setup(equipment)
 
-    # for e in network.nodes():
-    #     if isinstance(e, Fiber):
-    #         loss = e.params.loss_coef * e.params.length
-    #         e.params.con_in = con_in
-    #         e.params.con_out = con_out
-    #     if isinstance(e, Edfa):
-    #         e.operational.gain_target = loss + con_in + con_out
-
     path = compute_constrained_path(network, req)
     si = create_input_spectral_information(
         f_min=req.f_min, f_max=req.f_max, roll_off=req.roll_off, baud_rate=req.baud_rate, power=req.power,
         spacing=req.spacing, tx_osnr=req.tx_osnr, ref_carrier=ref)
-    # net_res = solve_network(path,si)
 
-    # for i, el in enumerate(path):
-    #     if isinstance(el, Roadm):
-    #         si = el(si, degree=path[i + 1].uid)
-    #     else:
-    #         si = el(si)
+    # path = 3*[Roadm(),Edfa(),Fiber(),Edfa(),Fiber(),Edfa(),Fiber(),Edfa(),Fiber(),Roadm()]
+
 
     params = Parameters()
-    params.snr_trx_dB = 17
+    params.snr_trx_dB = 13
     params.sig_power_dBm = 0
     params.Rs = baud_rate
     # FIXME: 根据si.frequency选择对应的channel
@@ -152,22 +140,25 @@ if __name__ == '__main__':
             # wss_params.loss_dB = el.loss
             # wss_params.pdl_dB = el.params.pdl
             wss_params.loss_dB = 6
-            wss_params.pdl = 0.5
+            wss_params.pdl_dB = 0.5
             wss_params_list.append(wss_params)
         elif isinstance(el,Edfa):
             si = el(si)
             link_config.append("oa")
             oa_params = Parameters()
-            oa_params.nf_dB = el.nf[0]
-            oa_params.gain_dB = el.gprofile[0]
+            # oa_params.nf_dB = el.nf[0]
+            # oa_params.gain_dB = el.gprofile[0]
             # oa_params.pdl_dB = el.params.pdl
+            oa_params.nf_dB = 20
+            oa_params.gain_dB = 20           
             oa_params.pdl_dB  = 0.3
             oa_params_list.append(oa_params)
         elif isinstance(el,Fiber):
             si = el(si)
             link_config.append("Fiber")
             fiber_params = Parameters()
-            fiber_params.loss_dB = el.loss
+            # fiber_params.loss_dB = el.loss
+            fiber_params.loss_dB = 16
             fiber_params_list.append(fiber_params)
         # elif isinstance(el,Fused):
         #     si = el(si)
@@ -190,6 +181,6 @@ if __name__ == '__main__':
     params.voa_params_list = voa_params_list[::-1]
     params.alpha_list = generate_random_numbers('pdf',(lambda x:np.sin(2*x),0,np.pi/2),len(link_config))
     params.beta_list = generate_random_numbers('uniform',(0,np.pi*2),len(link_config))
-    snr_esti_dB_x,snr_esti_dB_y = pdl_pen(params)
+    snr_pen_dB = pdl_pen(params)
 
     pass
