@@ -97,9 +97,11 @@ def pdl_pen(params:Parameters)->float:
     fiu_params_list = params.fiu_params_list
     fiber_params_list = params.fiber_params_list
     voa_params_list = params.voa_params_list
+    alpha_list = params.alpha_list
+    beta_list = params.beta_list
 
-    sig_power_dB = params.sig_power_dB
-    sig_power_lin = db2lin(sig_power_dB)    
+    sig_power_dBm = params.sig_power_dBm
+    sig_power_lin = db2lin(sig_power_dBm)/1e3
 
     n_power_lin = np.zeros(len(link_config)+2)
 
@@ -114,7 +116,7 @@ def pdl_pen(params:Parameters)->float:
             pdl_dB = getattr(wss_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=0,beta=0))
+            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i]))
             pass
         elif comp.lower() == 'oa':
             oa_params = oa_params_list.pop()
@@ -124,7 +126,7 @@ def pdl_pen(params:Parameters)->float:
             sig_power_lin = sig_power_lin * gain_lin
             n_power_lin = n_power_lin * gain_lin
             n_power_lin[i+1] = h*Fc*Rs*(gain_lin*nf_lin-1)
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=0,beta=0))
+            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i]))
             pass
         elif comp.lower() == 'fiber':
             fiber_params = fiber_params_list.pop()
@@ -132,7 +134,7 @@ def pdl_pen(params:Parameters)->float:
             pdl_dB = getattr(fiber_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin     
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=0,beta=0))   
+            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i]))   
             pass
         elif comp.lower() =='fiu':
             fiu_params = fiu_params_list.pop()
@@ -140,7 +142,7 @@ def pdl_pen(params:Parameters)->float:
             pdl_dB = getattr(fiu_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin  
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=0,beta=0)) 
+            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i])) 
             pass
         elif comp.lower() == 'voa':
             voa_params = voa_params_list.pop()
@@ -148,7 +150,7 @@ def pdl_pen(params:Parameters)->float:
             pdl_dB = getattr(voa_params,"pdl_dB",0)
             sig_power_lin = sig_power_lin / loss_lin
             n_power_lin = n_power_lin / loss_lin  
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=0,beta=0)) 
+            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i])) 
         else:
             raise TypeError('Unsupported component type')
     n_power_lin[-1] = sig_power_lin / db2lin(snr_trx_dB) / 2    
