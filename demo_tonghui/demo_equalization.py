@@ -133,4 +133,4 @@ def test_equalization(case, deltap, target, mode, slot_width, equalization):
     pass
 
 if __name__ == '__main__':
-    test_equalization(case='SI', deltap=0, target=0, mode="mode 1", slot_width=50e9, equalization='target_psd_out_mWperGHz')
+    test_equalization(case='SI', deltap=8, target=0, mode="mode 1", slot_width=50e9, equalization='target_psd_out_mWperGHz')
