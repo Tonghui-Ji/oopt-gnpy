@@ -271,6 +271,8 @@ def set_egress_amplifier(network, this_node, equipment, pref_ch_db, pref_total_d
                 voa = node.out_voa if node.out_voa else 0
                 if node.delta_p is None:
                     dp = target_power(network, next_node, equipment) + voa
+                    # dp 表示相对于reference power的变化量，对于20 dB的span，dp为0
+                    # EDFA真实的目标输出功率为pref_total_db+dp
                 else:
                     dp = node.delta_p
                 if node.effective_gain is None or power_mode:
@@ -538,7 +540,7 @@ def add_fiber_padding(network, fibers, padding):
 def build_network(network, equipment, pref_ch_db, pref_total_db, no_insert_edfas=False):
     default_span_data = equipment['Span']['default']
     max_length = int(convert_length(default_span_data.max_length, default_span_data.length_units))
-    min_length = max(int(default_span_data.padding / 0.2 * 1e3), 50_000)
+    min_length = max(int(default_span_data.padding / 0.2 * 1e3), 50_000) # 3.6支持新的数字下划线功能，以提高可读性
     bounds = range(min_length, max_length)
     target_length = max(min_length, min(max_length, 90_000))
 

@@ -1,7 +1,5 @@
-from pathlib import Path
-from numpy.testing import assert_allclose, assert_array_equal, assert_raises
-from numpy import array
-from copy import deepcopy
+import sys
+sys.path.append(r'C:\Users\44894\OneDrive\Coding\Python\oopt-gnpy')
 
 from gnpy.core.utils import lin2db, automatic_nch, dbm2watt, power_dbm_to_psd_mw_ghz, watt2dbm, psd2powerdbm
 from gnpy.core.network import build_network
@@ -18,6 +16,7 @@ from gnpy.core.parameters import Parameters
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 gc = GlobalControl()
 data_path = gc.gnpy_path/ 'data'
 EQPT_FILENAME = data_path / 'eqpt_config.json'
@@ -28,6 +27,7 @@ def net_setup(equipment):
     network = load_network(NETWORK_FILENAME, equipment)
     spectrum = equipment['SI']['default']
     p_db = spectrum.power_dbm
+    p_db = -8
     p_total_db = p_db + lin2db(automatic_nch(spectrum.f_min, spectrum.f_max, spectrum.spacing))
     build_network(network, equipment, p_db, p_total_db)
     return network
@@ -133,4 +133,4 @@ def test_equalization(case, deltap, target, mode, slot_width, equalization):
     pass
 
 if __name__ == '__main__':
-    test_equalization(case='SI', deltap=8, target=0, mode="mode 1", slot_width=50e9, equalization='target_psd_out_mWperGHz')
+    test_equalization(case='SI', deltap=-8, target=0, mode="mode 1", slot_width=50e9, equalization='target_psd_out_mWperGHz')
