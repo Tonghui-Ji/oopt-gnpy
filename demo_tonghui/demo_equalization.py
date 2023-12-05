@@ -1,7 +1,7 @@
 import sys
 sys.path.append(r'C:\Users\44894\OneDrive\Coding\Python\oopt-gnpy')
 
-from gnpy.core.utils import lin2db, automatic_nch, dbm2watt, power_dbm_to_psd_mw_ghz, watt2dbm, psd2powerdbm
+from gnpy.core.utils import lin2db,db2lin, automatic_nch, dbm2watt, power_dbm_to_psd_mw_ghz, watt2dbm, psd2powerdbm
 from gnpy.core.network import build_network
 from gnpy.core.elements import Roadm
 from gnpy.core.info import create_input_spectral_information, Pref, create_arbitrary_spectral_information, \
@@ -9,13 +9,15 @@ from gnpy.core.info import create_input_spectral_information, Pref, create_arbit
 from gnpy.core.equipment import trx_mode_params
 from gnpy.core.exceptions import ConfigurationError
 from gnpy.tools.json_io import network_from_json, load_equipment, load_network, _spectrum_from_json, load_json, \
-    Transceiver, requests_from_json
+    Transceiver, requests_from_json,network_from_params
 from gnpy.topology.request import PathRequest, compute_constrained_path, propagate, propagate_and_optimize_mode
 from support.gobal_control import GlobalControl
 from gnpy.core.parameters import Parameters
 import numpy as np
 import matplotlib.pyplot as plt
 
+from networkx import (dijkstra_path, NetworkXNoPath,
+                      all_simple_paths, shortest_simple_paths)
 
 gc = GlobalControl()
 data_path = gc.gnpy_path/ 'data'
@@ -24,6 +26,9 @@ NETWORK_FILENAME = data_path / 'testTopology_expected.json'
 
 def net_setup(equipment):
     """common setup for tests: builds network, equipment and oms only once"""
+    link_params = Parameters
+    link_params.spans_per_oms = 4
+    link_params.span_num = 10
     network = load_network(NETWORK_FILENAME, equipment)
     spectrum = equipment['SI']['default']
     p_db = spectrum.power_dbm
@@ -130,7 +135,50 @@ def test_equalization(case, deltap, target, mode, slot_width, equalization):
     plt.plot(net_res.sig_power_dB,'-o')
     plt.show()
 
-    pass
+def test_equalization_from_params(input_power,target, equalization):
+    """check that power target on roadm is correct for these cases; check on booster
+    - SI : target_pch_out_db / target_psd_out_mWperGHz
+    - node : target_pch_out_db / target_psd_out_mWperGHz
+    - per degree : target_pch_out_db / target_psd_out_mWperGHz
+    for these cases with and without power from user
+    """
+    equipment = load_equipment(EQPT_FILENAME)
+    setattr(equipment['Roadm']['default'], 'target_pch_out_db', target)
+    target_psd = power_dbm_to_psd_mw_ghz(target, 32e9)
+    ref = ReferenceCarrier(baud_rate=32e9, slot_width=50e9)
+
+    delattr(equipment['Roadm']['default'], 'target_pch_out_db')
+    setattr(equipment['Roadm']['default'], equalization, target_psd)
+
+    link_params = Parameters
+    link_params.spans_per_oms = 4
+    link_params.span_num = 10
+    network = network_from_params(link_params,equipment)
+    spectrum = equipment['SI']['default']
+    p_db = spectrum.power_dbm
+    p_db = -8
+    p_total_db = p_db + lin2db(automatic_nch(spectrum.f_min, spectrum.f_max, spectrum.spacing))
+    build_network(network, equipment, p_db, p_total_db)
+    path = []
+
+    path = [n for n in network.nodes]
+
+    p = input_power
+    p = db2lin(p) * 1e-3
+    spacing = 50e9  # THz
+    si = create_input_spectral_information(f_min=191.3e12, f_max=191.3e12 + 79 * spacing, roll_off=0.15,
+                                           baud_rate=32e9, power=p, spacing=spacing, tx_osnr=None,
+                                           ref_carrier=ReferenceCarrier(baud_rate=32e9, slot_width=50e9))
+    net_res = solve_network(path,si)
+
+    plt.figure()
+    plt.plot(net_res.frequency,net_res.sig_psd)
+    plt.legend()
+    
+    plt.figure()
+    plt.plot(net_res.sig_power_dB,'-o')
+    plt.show()
 
 if __name__ == '__main__':
-    test_equalization(case='SI', deltap=-8, target=0, mode="mode 1", slot_width=50e9, equalization='target_psd_out_mWperGHz')
+    # test_equalization(case='SI', deltap=-8, target=0, mode="mode 1", slot_width=50e9, equalization='target_psd_out_mWperGHz')
+    test_equalization_from_params(input_power=0,target=0,equalization='target_psd_out_mWperGHz')

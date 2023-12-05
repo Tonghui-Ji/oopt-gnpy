@@ -482,6 +482,101 @@ def _cls_for(equipment_type):
     else:
         raise ConfigurationError(f'Unknown network equipment "{equipment_type}"')
 
+def network_from_params(link_params,equipment):
+    '''
+    A 10-span optical link:
+                            Tx - wss 
+                                    - wss-oa-fiber-oa-fiber-oa-fiber-oa-fiber-wss
+                                    - wss-oa-fiber-oa-fiber-oa-fiber-oa-fiber-wss
+                                    - wss-oa-fiber-oa-fiber-wss
+                                                                                  - wss - Rx
+    '''
+    spans_per_oms = getattr(link_params,"spans_per_oms",4)
+    span_num = getattr(link_params,"span_num",10)
+
+    N_oms = span_num // spans_per_oms
+
+    link_config = []
+    link_config.append('tx')
+    link_config.append('wss')
+    for i in range(N_oms):
+        link_config.append('wss')
+        for j in range(spans_per_oms):
+            link_config.append('oa')
+            link_config.append('fiber')
+        link_config.append('wss')
+    link_config.append('wss')
+    link_config.append('rx')
+
+    g = DiGraph()  # 用于创建网络的一个包
+    nodes = []
+    for el in link_config: 
+        el_config = {}
+        n_roadm = 0
+        n_fiber = 0
+        n_oa = 0
+        if el.lower() == 'tx':
+            el_config['uid'] = 'Tx'
+            el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
+            el_config['type'] = 'Transceiver'
+        elif el.lower() == 'rx':
+            el_config['uid'] = 'rx'
+            el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
+            el_config['type'] = 'Transceiver'
+        elif el.lower() == 'wss':
+            el_config['uid'] = 'Roadm %d'%n_roadm
+            el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
+            extra_params = equipment['Roadm']['default'].__dict__
+            temp = el_config.setdefault('params', {})
+            # if equalization is defined, remove default equalization from the extra_params
+            # If equalisation is not defined in the element config, then use the default one from equipment
+            # if more than one equalization was defined in element config, then raise an error
+            extra_params = merge_equalization(temp, extra_params)
+            if not extra_params:
+                msg = f'ROADM {el_config["uid"]}: invalid equalization settings'
+                raise ConfigurationError(msg)
+            temp = merge_amplifier_restrictions(temp, extra_params)
+            el_config['params'] = temp
+            el_config['type'] = 'Roadm'
+            el_config['type_variety'] = 'default'
+        elif el.lower() == 'fiber':
+            el_config['uid'] = 'fiber %d'%n_fiber
+            el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
+            el_config['type'] = 'Fiber'
+            el_config['type_variety'] = 'SSMF'
+            el_config['params'] = {'length':20.0,'length_units':'km','loss_coef':0.2,'con_in':None,'con_out':None}
+            extra_params = equipment['Fiber'][el_config['type_variety']].__dict__
+            temp = el_config.setdefault('params', {})
+            temp = merge_amplifier_restrictions(temp, extra_params)
+            el_config['params'] = temp
+        elif el.lower() == 'oa':
+            el_config['uid'] = 'edfa %d'%n_oa
+            el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
+            el_config['type'] = 'Edfa'
+            el_config['type_variety'] = 'std_low_gain'
+            el_config['operational'] = {'gain_target':None,'delta_p':None,'tilt_target':0,'out_voa':None}
+            el_config['params'] = Amp.default_values
+        typ = el_config.pop('type')
+        cls = _cls_for(typ)
+        el = cls(**el_config)
+        g.add_node(el)
+        nodes.append(el)
+
+    # nodes = {k.uid: k for k in g.nodes()}
+ 
+    visited_nodes = []
+    for i,node in enumerate(nodes):
+        if i == len(nodes)-1:
+            break
+        if node in visited_nodes:
+            continue
+        visited_nodes.append(node)
+        if isinstance(node,elements.Fiber):
+            g.add_edge(nodes[i], nodes[i+1], weight=node.params.length)
+        else:
+            g.add_edge(nodes[i], nodes[i+1], weight=0.01)
+
+    return g
 
 def network_from_json(json_data, equipment):
     # NOTE|dutc: we could use the following, but it would tie our data format
@@ -522,7 +617,7 @@ def network_from_json(json_data, equipment):
         g.add_node(el)
 
     nodes = {k.uid: k for k in g.nodes()}
-
+ 
     for cx in json_data['connections']:
         from_node, to_node = cx['from_node'], cx['to_node']
         try:
