@@ -158,7 +158,7 @@ def test_equalization_from_params(input_power,target, equalization):
     p_db = spectrum.power_dbm
     p_db = -8
     p_total_db = p_db + lin2db(automatic_nch(spectrum.f_min, spectrum.f_max, spectrum.spacing))
-    build_network(network, equipment, p_db, p_total_db)
+    build_network(network, equipment, p_db, p_total_db,no_insert_edfas=True)
     path = []
 
     path = [n for n in network.nodes]

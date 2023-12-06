@@ -510,11 +510,11 @@ def network_from_params(link_params,equipment):
 
     g = DiGraph()  # 用于创建网络的一个包
     nodes = []
+    el_config = {}
+    n_roadm = 0
+    n_fiber = 0
+    n_oa = 0
     for el in link_config: 
-        el_config = {}
-        n_roadm = 0
-        n_fiber = 0
-        n_oa = 0
         if el.lower() == 'tx':
             el_config['uid'] = 'Tx'
             el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
@@ -524,6 +524,7 @@ def network_from_params(link_params,equipment):
             el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
             el_config['type'] = 'Transceiver'
         elif el.lower() == 'wss':
+            n_roadm += 1
             el_config['uid'] = 'Roadm %d'%n_roadm
             el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
             extra_params = equipment['Roadm']['default'].__dict__
@@ -540,6 +541,7 @@ def network_from_params(link_params,equipment):
             el_config['type'] = 'Roadm'
             el_config['type_variety'] = 'default'
         elif el.lower() == 'fiber':
+            n_fiber += 1
             el_config['uid'] = 'fiber %d'%n_fiber
             el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
             el_config['type'] = 'Fiber'
@@ -550,6 +552,7 @@ def network_from_params(link_params,equipment):
             temp = merge_amplifier_restrictions(temp, extra_params)
             el_config['params'] = temp
         elif el.lower() == 'oa':
+            n_oa += 1
             el_config['uid'] = 'edfa %d'%n_oa
             el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
             el_config['type'] = 'Edfa'
