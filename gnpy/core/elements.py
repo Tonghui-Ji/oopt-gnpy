@@ -241,7 +241,7 @@ class Roadm(_Node):
         # Target output power for the reference carrier, can only be computed on the fly, because it depends
         # on the path, since it depends on the equalization definition on the degree.
         self.ref_pch_out_dbm = None
-        self.loss = 0  # auto-design interest
+        self.loss = 6.5  # auto-design interest
 
         # Optical power of carriers are equalized by the ROADM, so that the experienced loss is not the same for
         # different carriers. The ref_effective_loss records the loss for a reference carrier.

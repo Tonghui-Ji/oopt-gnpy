@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 gc = GlobalControl()
 data_path = gc.gnpy_path/ 'data'
 EQPT_FILENAME = data_path / 'eqpt_config.json'
-NETWORK_FILENAME = data_path / 'testTopology_expected.json'
 
 def solve_network(path,si):
     net_res = Parameters()  # 仿真结果是一个parameters类型的，不知道这种是不是合理？
@@ -56,9 +55,8 @@ def c120_l120_sim(input_power,target, equalization):
     network = network_from_params(link_params,equipment)
     spectrum = equipment['SI']['default']
     p_db = spectrum.power_dbm
-    p_db = -8
     p_total_db = p_db + lin2db(automatic_nch(spectrum.f_min, spectrum.f_max, spectrum.spacing))
-    build_network(network, equipment, p_db, p_total_db,no_insert_edfas=True)
+    build_network(network, equipment, p_db, p_total_db, no_insert_edfas=True)
     path = []
 
     path = [n for n in network.nodes]

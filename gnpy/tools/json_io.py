@@ -546,7 +546,7 @@ def network_from_params(link_params,equipment):
             el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
             el_config['type'] = 'Fiber'
             el_config['type_variety'] = 'SSMF'
-            el_config['params'] = {'length':20.0,'length_units':'km','loss_coef':0.2,'con_in':None,'con_out':None}
+            el_config['params'] = {'length':80.0,'length_units':'km','loss_coef':0.2,'con_in':None,'con_out':None}
             extra_params = equipment['Fiber'][el_config['type_variety']].__dict__
             temp = el_config.setdefault('params', {})
             temp = merge_amplifier_restrictions(temp, extra_params)
