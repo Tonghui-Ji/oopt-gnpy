@@ -482,7 +482,7 @@ def _cls_for(equipment_type):
     else:
         raise ConfigurationError(f'Unknown network equipment "{equipment_type}"')
 
-def network_from_params(link_params,equipment):
+def network_from_params(link_params,equipment,el_params):
     '''
     A 10-span optical link:
                             Tx - wss 
@@ -493,6 +493,15 @@ def network_from_params(link_params,equipment):
     '''
     spans_per_oms = getattr(link_params,"spans_per_oms",4)
     span_num = getattr(link_params,"span_num",10)
+
+    wss_params = getattr(el_params,'wss_params',None)
+    fiber_params = getattr(el_params,'fiber_params',None)
+    oa_params = getattr(el_params,'oa_params',None)
+
+    length = getattr(fiber_params,'length',80)
+    oa_type = getattr(oa_params,'oa_type','std_low_gain')
+    gain_target = getattr(oa_params,'gain_target',None)
+    delta_p = getattr(oa_params,'delta_p',None)
 
     N_oms = span_num // spans_per_oms
 
@@ -546,7 +555,7 @@ def network_from_params(link_params,equipment):
             el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
             el_config['type'] = 'Fiber'
             el_config['type_variety'] = 'SSMF'
-            el_config['params'] = {'length':80.0,'length_units':'km','loss_coef':0.2,'con_in':None,'con_out':None}
+            el_config['params'] = {'length':length,'length_units':'km','loss_coef':0.2,'con_in':None,'con_out':None}
             extra_params = equipment['Fiber'][el_config['type_variety']].__dict__
             temp = el_config.setdefault('params', {})
             temp = merge_amplifier_restrictions(temp, extra_params)
@@ -556,8 +565,8 @@ def network_from_params(link_params,equipment):
             el_config['uid'] = 'edfa %d'%n_oa
             el_config['metadata'] = {'location':{'city':'Beijing','region':'North','latitude':0.0,'longitude':0.0}}
             el_config['type'] = 'Edfa'
-            el_config['type_variety'] = 'std_low_gain'
-            el_config['operational'] = {'gain_target':None,'delta_p':None,'tilt_target':0,'out_voa':None}
+            el_config['type_variety'] = oa_type
+            el_config['operational'] = {'gain_target':gain_target,'delta_p':delta_p,'tilt_target':0,'out_voa':None}
             el_config['params'] = Amp.default_values
         typ = el_config.pop('type')
         cls = _cls_for(typ)

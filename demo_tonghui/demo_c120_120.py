@@ -49,10 +49,18 @@ def c120_l120_sim(input_power,target, equalization):
     delattr(equipment['Roadm']['default'], 'target_pch_out_db')
     setattr(equipment['Roadm']['default'], equalization, target_psd)
 
-    link_params = Parameters
+    link_params = Parameters()
     link_params.spans_per_oms = 4
     link_params.span_num = 10
-    network = network_from_params(link_params,equipment)
+    el_params = Parameters()
+    el_params.oa_params = Parameters()
+    el_params.fiber_params = Parameters()
+    el_params.wss_params = Parameters()
+
+    el_params.oa_params.gain_target = 10
+    el_params.fiber_params.length = 80
+
+    network = network_from_params(link_params,equipment,el_params)
     spectrum = equipment['SI']['default']
     p_db = spectrum.power_dbm
     p_total_db = p_db + lin2db(automatic_nch(spectrum.f_min, spectrum.f_max, spectrum.spacing))
@@ -78,4 +86,4 @@ def c120_l120_sim(input_power,target, equalization):
     plt.show()
 
 if __name__ == '__main__':
-    c120_l120_sim(input_power=0,target=0,equalization='target_psd_out_mWperGHz')
+    c120_l120_sim(input_power=-5,target=-2,equalization='target_psd_out_mWperGHz')
