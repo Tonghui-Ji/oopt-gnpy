@@ -3,8 +3,32 @@ from gnpy.core.utils import lin2db,db2lin,snr2ber,ber2snr
 from scipy.constants import pi,h,c
 from gnpy.core.parameters import Parameters
 from scipy.special import erfc
+from scipy.stats import unitary_group
+import matplotlib.pyplot as plt
 
-def h_pdl(D:int=4, mdl_pp_dB:float=0, mdl_rms_dB:float=0, type:str='active')->np.array:
+def h_mc(D:int=4)->np.array:
+    """
+    generate random unitary matrix
+
+    Parameters
+    ----------
+    D : int scalar
+        number of modes.
+    Returns
+    -------
+    h_rsop : complex-valued ndarray
+        mode coupling matrix.
+
+    References
+    -------
+    [1] https://arxiv.org/abs/math-ph/0609050  
+
+    """
+    unitary_group.rvs(D)
+    
+
+
+def h_mdl(D:int=4, mdl_pp_dB:float=1, type:str='active')->np.array:
     """
     generate mdl transfer matrix
     While the peak-to-peak MDG is relevant for predicting the transmission performance of weakly coupled MDM links.
@@ -57,7 +81,10 @@ def h_pdl(D:int=4, mdl_pp_dB:float=0, mdl_rms_dB:float=0, type:str='active')->np
     else:
         raise TypeError('Unsuporrted pdl type')
     
-
+    h_mc = unitary_group.rvs(D)
+    h_mdl = np.dot(h_mc, h_mdl)
+    h_mc = unitary_group.rvs(D)
+    h_mdl = np.dot(h_mdl,h_mc)
 
     return h_mdl, mdl_rms_dB
 
@@ -77,128 +104,34 @@ def prod_mat(mat_list:list)->np.array:
     References
     -------    
     """    
-    mat_prod = np.array([[1,0],[0,1]])
+    mat_prod = np.identity(mat_list[0].shape[0])
 
     for tmp_mat in mat_list:
         mat_prod = np.dot(tmp_mat,mat_prod)
 
     return mat_prod
 
-def pdl_pen(params:Parameters)->float:
-    """
-    Calculate snr pen induced by pdl based on mmse criterion.
 
-    Parameters
-    ----------
-    params : Parameters object
-        Simulation Parameters.
-    Returns
-    -------
-    snr_pen : real scalar
-        Snr penatly induce by pdl.
+if __name__ == '__main__': 
+    N = 10000
+    D = 2
+    mdl_tot_pp_dB = np.zeros(N)
+    mdl_tot_rms_coupled_dB = np.zeros(N)
+    for j in range(N):
+        mdl_tot_var_uncoupled_dB = 0
+        h_mdl_list = []
+        for i in range(1000):
+            h_mdl_tmp,mdl_tmp_rms_dB = h_mdl(D=D, mdl_pp_dB=1)
+            mdl_tot_var_uncoupled_dB += mdl_tmp_rms_dB**2 
+            h_mdl_list.append(h_mdl_tmp)
+        mdl_tot_rms_uncoupled_dB = np.sqrt(mdl_tot_var_uncoupled_dB)
+        h_mdl_tot = prod_mat(h_mdl_list)
+        U,S,V = np.linalg.svd(h_mdl_tot)
+        mdl_tot_pp_dB[j] = 2*lin2db(max(S)/min(S))
+        mdl_tot_rms_coupled_dB[j] = np.std(2*lin2db(S))
+        mdl_tot_rms_coupled_esti_dB = mdl_tot_rms_uncoupled_dB*np.sqrt(1+mdl_tot_var_uncoupled_dB/(12*(1-1/D**2)))
 
-    References
-    -------
-    [1] Analysis of Impact of Polarization Dependent Loss in Point to Multi-Point Subsea Communication Systems.    
-    [2] QAM BER for AWGN channel: https://www.etti.unibw.de/labalive/experiment/qam/
-    """
-    link_config = params.link_params.link_config
-    snr_trx_dB = params.snr_trx_dB
-    Rs = params.Rs
-    Fc = params.Fc
+        pass
 
-    oa_params_list = getattr(params,"oa_params_list",None)
-    wss_params_list = getattr(params,"wss_params_list",None)
-    fiu_params_list = getattr(params,"fiu_params_list",None)
-    fiber_params_list = getattr(params,"fiber_params_list",None)
-    voa_params_list = getattr(params,"voa_params_list",None)
-    alpha_list = getattr(params,"alpha_list",None)
-    beta_list = getattr(params,"beta_list",None)
-
-    sig_power_dBm = params.sig_power_dBm
-    sig_power_lin = db2lin(sig_power_dBm)/1e3
-
-    n_power_lin = np.zeros(len(link_config)+2)
-
-    n_power_lin[0] = sig_power_lin / db2lin(snr_trx_dB) / 2
-    h_pdl_list = []
-
-
-    for i,comp in enumerate(link_config):
-        if comp.lower() == 'wss':
-            wss_params = wss_params_list.pop()
-            loss_lin = db2lin(getattr(wss_params,"loss_dB",8))
-            pdl_dB = getattr(wss_params,"pdl_dB",0.5)
-            sig_power_lin = sig_power_lin / loss_lin
-            n_power_lin = n_power_lin / loss_lin
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i]))
-            pass
-        elif comp.lower() == 'oa':
-            oa_params = oa_params_list.pop()
-            gain_lin = db2lin(getattr(oa_params,"gain_dB",16))
-            nf_lin = db2lin(getattr(oa_params,"nf_dB",4.5))
-            pdl_dB = getattr(oa_params,"pdl_dB",0.3)
-            sig_power_lin = sig_power_lin * gain_lin
-            n_power_lin = n_power_lin * gain_lin
-            n_power_lin[i+1] = h*Fc*Rs*(gain_lin*nf_lin-1)
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i]))
-            pass
-        elif comp.lower() == 'fiber':
-            fiber_params = fiber_params_list.pop()
-            loss_lin = db2lin(getattr(fiber_params,"loss_dB",16))
-            pdl_dB = getattr(fiber_params,"pdl_dB",0)
-            sig_power_lin = sig_power_lin / loss_lin
-            n_power_lin = n_power_lin / loss_lin     
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i]))   
-            pass
-        elif comp.lower() =='fiu':
-            fiu_params = fiu_params_list.pop()
-            loss_lin = db2lin(getattr(fiu_params,"loss_dB",1))
-            pdl_dB = getattr(fiu_params,"pdl_dB",0.1)
-            sig_power_lin = sig_power_lin / loss_lin
-            n_power_lin = n_power_lin / loss_lin  
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i])) 
-            pass
-        elif comp.lower() == 'voa':
-            voa_params = voa_params_list.pop()
-            loss_lin = db2lin(getattr(voa_params,"loss_dB",1))
-            pdl_dB = getattr(voa_params,"pdl_dB",0.1)
-            sig_power_lin = sig_power_lin / loss_lin
-            n_power_lin = n_power_lin / loss_lin  
-            h_pdl_list.append(h_pdl(pdl_dB=pdl_dB,alpha=alpha_list[i],beta=beta_list[i])) 
-        else:
-            raise TypeError('Unsupported component type')
-    n_power_lin[-1] = sig_power_lin / db2lin(snr_trx_dB) / 2    
-    h_pdl_list.append(h_pdl(pdl_dB=0,alpha=0,beta=0)) # 和收端ASE匹配，便于计算
-
-    H_ch = prod_mat(h_pdl_list)
-    alpha = n_power_lin/sum(n_power_lin)
-    
-    S = np.mat([[0,0],[0,0]],dtype='complex')
-    for i in range(len(n_power_lin)):
-        # Note: T and S is matrix, just for calculation convenient
-        T = np.mat(prod_mat(h_pdl_list[i:]))
-        S += alpha[i]*(T*T.H)
-
-    W = S.I
-    H_eq = W*H_ch
-
-    snr_ase_lin = sig_power_lin/sum(n_power_lin)
-    MMSE = np.abs((H_eq*H_eq.H + 1/snr_ase_lin*np.eye(2)).I)
-    snr_esti_dB_x = lin2db(sig_power_lin/MMSE[0,0]/sum(n_power_lin)-1)
-    snr_esti_dB_y = lin2db(sig_power_lin/MMSE[1,1]/sum(n_power_lin)-1)
-
-    # convert SNR to ber, calculate average ber, conver average ber to average snr
-    M = 16
-    ber_x = snr2ber(M,snr_esti_dB_x)
-    ber_y = snr2ber(M,snr_esti_dB_y)
-    snr_pdl_dB = ber2snr(M,(ber_x + ber_y) / 2)
-
-    snr_ase_dB = lin2db(sig_power_lin/sum(n_power_lin))
-    snr_pen_dB = snr_ase_dB - snr_pdl_dB
-
-    return snr_pen_dB
-
-
-if __name__ == '__main__':
-    h_pdl(D=4, mdl_pp_dB=3, mdl_rms_dB=1)
+    plt.hist(mdl_tot_pp_dB, bins=10, edgecolor='black')
+    plt.show()
